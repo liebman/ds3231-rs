@@ -5,7 +5,10 @@ use bilge::BitsError;
 use chrono::NaiveDate;
 use chrono::NaiveDateTime;
 use chrono::NaiveTime;
-use embedded_hal_async::i2c::I2c;
+#[cfg(feature = "ehrc1")]
+use eharc1::i2c::I2c;
+#[cfg(feature = "ehrc2")]
+use eharc2::i2c::I2c;
 use log::debug;
 
 #[bitsize(1)]
