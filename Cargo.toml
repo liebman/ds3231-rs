@@ -8,10 +8,10 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 bilge = { version = "0.2.0", git = "https://github.com/hecatia-elegua/bilge.git", rev = "41843c8"}
 chrono = { version = "0.4.31", default-features = false, features = [] }
-ehrc1 = {package = "embedded-hal", version = "=1.0.0-rc.1", optional = true}
-eharc1 = {package = "embedded-hal-async", version = "=1.0.0-rc.1", optional = true}
 ehrc2 = {package = "embedded-hal", version = "=1.0.0-rc.2", optional = true}
 eharc2 = {package = "embedded-hal-async", version = "=1.0.0-rc.2", optional = true}
+ehrc1 = {package = "embedded-hal", version = "=1.0.0-rc.1", optional = true}
+eharc1 = {package = "embedded-hal-async", version = "=1.0.0-rc.1", optional = true}
 log = { version = "0.4.20" }
 paste = { version = "1.0.14" }
 
