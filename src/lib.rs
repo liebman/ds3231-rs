@@ -1,18 +1,17 @@
 #![no_std]
+mod datetime;
 
 use bitfield::bitfield;
 use chrono::DateTime;
-use chrono::Datelike;
-use chrono::NaiveDate;
-use chrono::NaiveDateTime;
-use chrono::NaiveTime;
-use chrono::Timelike;
 use chrono::Utc;
+use datetime::DS3231DateTimeError;
 #[cfg(not(feature = "async"))]
 use embedded_hal::i2c::I2c;
 #[cfg(feature = "async")]
 use embedded_hal_async::i2c::I2c;
 use log::debug;
+
+use crate::datetime::DS3231DateTime;
 
 pub struct Config {
     pub time_representation: TimeRepresentation,
@@ -262,17 +261,6 @@ bitfield! {
 }
 from_register_u8!(TemperatureFraction);
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-struct DS3231DateTime {
-    seconds: Seconds,
-    minutes: Minutes,
-    hours: Hours,
-    day: Day,
-    date: Date,
-    month: Month,
-    year: Year,
-}
-
 macro_rules! set_and_get_register {
     ($(($name:ident, $regaddr:expr, $typ:ty)),+) => {
         $(
@@ -318,6 +306,7 @@ macro_rules! set_and_get_register {
 #[derive(Debug)]
 pub enum DS3231Error<I2CE> {
     I2c(I2CE),
+    DateTime(DS3231DateTimeError),
 }
 
 impl<I2CE> From<I2CE> for DS3231Error<I2CE> {
@@ -325,6 +314,13 @@ impl<I2CE> From<I2CE> for DS3231Error<I2CE> {
         DS3231Error::I2c(e)
     }
 }
+
+// impl<I2CE> From<DS3231DateTimeError> for DS3231Error<I2CE>
+// {
+//     fn from(e: DS3231DateTimeError) -> Self {
+//         DS3231Error::DateTime(e)
+//     }
+// }
 
 pub struct DS3231<I2C: I2c> {
     i2c: I2C,
@@ -381,15 +377,7 @@ impl<I2C: I2c> DS3231<I2C> {
         let mut data = [0; 7];
         self.i2c
             .write_read(self.address, &[RegAddr::Seconds as u8], &mut data)?;
-        Ok(DS3231DateTime {
-            seconds: Seconds(data[0]),
-            minutes: Minutes(data[1]),
-            hours: Hours(data[2]),
-            day: Day(data[3]),
-            date: Date(data[4]),
-            month: Month(data[5]),
-            year: Year(data[6]),
-        })
+        Ok(data.into())
     }
 
     #[cfg(feature = "async")]
@@ -398,15 +386,7 @@ impl<I2C: I2c> DS3231<I2C> {
         self.i2c
             .write_read(self.address, &[RegAddr::Seconds as u8], &mut data)
             .await?;
-        Ok(DS3231DateTime {
-            seconds: Seconds(data[0]),
-            minutes: Minutes(data[1]),
-            hours: Hours(data[2]),
-            day: Day(data[3]),
-            date: Date(data[4]),
-            month: Month(data[5]),
-            year: Year(data[6]),
-        })
+        Ok(data.into())
     }
 
     #[cfg(not(feature = "async"))]
@@ -414,17 +394,18 @@ impl<I2C: I2c> DS3231<I2C> {
         &mut self,
         datetime: &DS3231DateTime,
     ) -> Result<(), DS3231Error<I2C::Error>> {
+        let data: [u8; 7] = datetime.into();
         self.i2c.write(
             self.address,
             &[
                 RegAddr::Seconds as u8,
-                datetime.seconds.0,
-                datetime.minutes.0,
-                datetime.hours.0,
-                datetime.day.0,
-                datetime.date.0,
-                datetime.month.0,
-                datetime.year.0,
+                data[0],
+                data[1],
+                data[2],
+                data[3],
+                data[4],
+                data[5],
+                data[6],
             ],
         );
         Ok(())
@@ -435,152 +416,35 @@ impl<I2C: I2c> DS3231<I2C> {
         &mut self,
         datetime: &DS3231DateTime,
     ) -> Result<(), DS3231Error<I2C::Error>> {
+        let data: [u8; 7] = datetime.into();
         self.i2c
             .write(
                 self.address,
                 &[
                     RegAddr::Seconds as u8,
-                    datetime.seconds.0,
-                    datetime.minutes.0,
-                    datetime.hours.0,
-                    datetime.day.0,
-                    datetime.date.0,
-                    datetime.month.0,
-                    datetime.year.0,
+                    data[0],
+                    data[1],
+                    data[2],
+                    data[3],
+                    data[4],
+                    data[5],
+                    data[6],
                 ],
             )
             .await?;
         Ok(())
     }
 
-    fn raw_datetime2datetime(
-        &self,
-        raw: &DS3231DateTime,
-    ) -> Result<DateTime<Utc>, DS3231Error<I2C::Error>> {
-        let seconds = 10 * u32::from(raw.seconds.ten_seconds()) + u32::from(raw.seconds.seconds());
-        let minutes = 10 * u32::from(raw.minutes.ten_minutes()) + u32::from(raw.minutes.minutes());
-        let hours = 10 * u32::from(raw.hours.ten_hours()) + u32::from(raw.hours.hours());
-        let hours = match raw.hours.time_representation() {
-            TimeRepresentation::TwentyFourHour => {
-                hours + 20 * u32::from(raw.hours.pm_or_twenty_hours())
-            }
-            TimeRepresentation::TwelveHour => {
-                hours + 12 * u32::from(raw.hours.pm_or_twenty_hours())
-            }
-        };
-        debug!(
-            "raw_hour={:08b} h={} m={} s={}",
-            raw.hours.0, hours, minutes, seconds
-        );
-        let ndt = NaiveDateTime::new(
-            NaiveDate::from_ymd_opt(
-                2000 + (10 * u32::from(raw.year.ten_year()) + u32::from(raw.year.year())) as i32,
-                10 * u32::from(raw.month.ten_month()) + u32::from(raw.month.month()),
-                (10 * u32::from(raw.date.ten_date()) + u32::from(raw.date.date())),
-            )
-            .expect("Invalid date"),
-            NaiveTime::from_hms_opt(hours, minutes, seconds).expect("Invalid time"),
-        );
-        let ts = ndt.and_utc().timestamp();
-        Ok(DateTime::from_timestamp(ts, 0).unwrap())
-    }
-
     #[cfg(not(feature = "async"))]
     pub fn datetime(&mut self) -> Result<DateTime<Utc>, DS3231Error<I2C::Error>> {
         let raw = self.read_raw_datetime()?;
-        self.raw_datetime2datetime(&raw)
+        raw.into_datetime().map_err(DS3231Error::DateTime)
     }
 
     #[cfg(feature = "async")]
     pub async fn datetime(&mut self) -> Result<NaiveDateTime, DS3231Error<I2C::Error>> {
         let raw = self.read_raw_datetime().await?;
-        self.raw_datetime2datetime(&raw)
-    }
-
-    fn datetime2datetime_raw(&self, datetime: &DateTime<Utc>) -> DS3231DateTime {
-        let seconds = {
-            let ones = (datetime.second() % 10) as u8;
-            let tens = (datetime.second() / 10) as u8;
-            let mut value = Seconds::default();
-            value.set_seconds(ones);
-            value.set_ten_seconds(tens);
-            value
-        };
-        let minutes = {
-            let ones = (datetime.minute() % 10) as u8;
-            let tens = (datetime.minute() / 10) as u8;
-            let mut value = Minutes::default();
-            value.set_minutes(ones);
-            value.set_ten_minutes(tens);
-            value
-        };
-        let hours = {
-            let ones = (datetime.hour() % 10) as u8;
-            let ten = (datetime.hour() / 10) as u8 & 0x01;
-            let twenty = (datetime.hour() / 10) as u8 & 0x02;
-            let mut value = Hours::default();
-            value.set_time_representation(self.time_representation);
-            value.set_hours(ones);
-            value.set_ten_hours(ten);
-            value.set_pm_or_twenty_hours(twenty);
-            value
-        };
-        let day = {
-            let mut value = Day::default();
-            value.set_day(datetime.weekday().num_days_from_sunday() as u8);
-            value
-        };
-        let date = {
-            let ones = (datetime.day() % 10) as u8;
-            let tens = (datetime.day() / 10) as u8;
-            let mut value = Date::default();
-            value.set_date(ones);
-            value.set_ten_date(tens);
-            value
-        };
-        let mut month = {
-            let ones = (datetime.month() % 10) as u8;
-            let tens = (datetime.month() / 10) as u8;
-            let mut value = Month::default();
-            value.set_month(ones);
-            value.set_ten_month(tens);
-            value
-        };
-        let year = {
-            let year: i32 = datetime.year() - 2000;
-            if year > 199 {
-                panic!("Year {} is too late! must be before 2200", datetime.year());
-            }
-            if year < 0 {
-                panic!("Year {} is too early! must be after 2000", datetime.year());
-            }
-            let mut year = year.unsigned_abs() as u8;
-            debug!("unsigned raw year={}", year);
-            if year > 99 {
-                year -= 100;
-                month.set_century(true);
-            }
-            debug!("year={} month={:?}", year, month);
-            let ones = (year % 10);
-            let tens = (year / 10);
-            debug!("ones={} tens={}", ones, tens);
-            let mut value = Year::default();
-            value.set_year(ones);
-            value.set_ten_year(tens);
-            value
-        };
-        debug!("year={:?}", year);
-        let raw = DS3231DateTime {
-            seconds,
-            minutes,
-            hours,
-            day,
-            date,
-            month,
-            year,
-        };
-        debug!("raw={:?}", raw);
-        raw
+        raw.into_datetime().map_err(DS3231Error::DateTime)
     }
 
     #[cfg(not(feature = "async"))]
@@ -588,7 +452,8 @@ impl<I2C: I2c> DS3231<I2C> {
         &mut self,
         datetime: &DateTime<Utc>,
     ) -> Result<(), DS3231Error<I2C::Error>> {
-        let raw = self.datetime2datetime_raw(datetime);
+        let raw = DS3231DateTime::from_datetime(datetime, self.time_representation)
+            .map_err(DS3231Error::DateTime)?;
         self.write_raw_datetime(&raw)?;
         Ok(())
     }
