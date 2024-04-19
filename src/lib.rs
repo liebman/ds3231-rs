@@ -614,12 +614,3 @@ impl<I2C: I2c> DS3231<I2C> {
         (status, RegAddr::ControlStatus, Status)
     );
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn test_datetime_conversions() {
-
-    }
-}
