@@ -6,17 +6,13 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-bilge = { version = "0.2.0", git = "https://github.com/hecatia-elegua/bilge.git", rev = "41843c8"}
-chrono = { version = "0.4.31", default-features = false, features = [] }
-ehrc2 = {package = "embedded-hal", version = "=1.0.0-rc.2", optional = true}
-eharc2 = {package = "embedded-hal-async", version = "=1.0.0-rc.2", optional = true}
-ehrc1 = {package = "embedded-hal", version = "=1.0.0-rc.1", optional = true}
-eharc1 = {package = "embedded-hal-async", version = "=1.0.0-rc.1", optional = true}
+bitfield = { version = "0.15.0" }
+chrono = { version = "0.4", default-features = false, features = [] }
+embedded-hal = {version = "=1.0.0"}
+embedded-hal-async = {version = "=1.0.0"}
 log = { version = "0.4.20" }
 paste = { version = "1.0.14" }
 
 [features]
-default = ["ehrc2", "async"]
-ehrc1 = ["dep:ehrc1", "dep:eharc1"]
-ehrc2 = ["dep:ehrc2", "dep:eharc2"]
+default = []
 async = []
