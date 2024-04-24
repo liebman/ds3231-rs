@@ -442,7 +442,7 @@ impl<I2C: I2c> DS3231<I2C> {
     }
 
     #[cfg(feature = "async")]
-    pub async fn datetime(&mut self) -> Result<NaiveDateTime, DS3231Error<I2C::Error>> {
+    pub async fn datetime(&mut self) -> Result<DateTime<Utc>, DS3231Error<I2C::Error>> {
         let raw = self.read_raw_datetime().await?;
         raw.into_datetime().map_err(DS3231Error::DateTime)
     }
@@ -463,7 +463,8 @@ impl<I2C: I2c> DS3231<I2C> {
         &mut self,
         datetime: &DateTime<Utc>,
     ) -> Result<(), DS3231Error<I2C::Error>> {
-        let raw = self.datetime2datetime_raw(datetime);
+        let raw = DS3231DateTime::from_datetime(datetime, self.time_representation)
+            .map_err(DS3231Error::DateTime)?;
         self.write_raw_datetime(&raw).await?;
         Ok(())
     }

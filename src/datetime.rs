@@ -52,7 +52,7 @@ impl DS3231DateTime {
         let hours = {
             let ones = (datetime.hour() % 10) as u8;
             let ten = (datetime.hour() / 10) as u8 & 0x01;
-            let twenty = (datetime.hour() / 10) as u8 & 0x02;
+            let twenty = ((datetime.hour() / 10) as u8 >> 1) & 0x01;
             let mut value = Hours::default();
             value.set_time_representation(time_representation);
             value.set_hours(ones);
@@ -138,8 +138,8 @@ impl DS3231DateTime {
             }
         };
         debug!(
-            "raw_hour={:08b} h={} m={} s={}",
-            self.hours.0, hours, minutes, seconds
+            "raw_hour={:?} h={} m={} s={}",
+            self.hours, hours, minutes, seconds
         );
         let ndt = NaiveDateTime::new(
             NaiveDate::from_ymd_opt(
