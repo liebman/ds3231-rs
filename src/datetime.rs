@@ -5,8 +5,14 @@ use chrono::NaiveDateTime;
 use chrono::NaiveTime;
 use chrono::Timelike;
 use chrono::Utc;
+#[cfg(feature = "log")]
 use log::debug;
+#[cfg(feature = "log")]
 use log::error;
+#[cfg(feature = "defmt")]
+use defmt::debug;
+#[cfg(feature = "defmt")]
+use defmt::error;
 
 use crate::Date;
 use crate::Day;
@@ -84,10 +90,12 @@ impl DS3231DateTime {
         let year = {
             let year: i32 = datetime.year() - 2000;
             if year > 199 {
+                #[cfg(any(feature = "log", feature = "defmt"))]
                 error!("Year {} is too late! must be before 2200", datetime.year());
                 return Err(DS3231DateTimeError::YearNotBefore2200);
             }
             if year < 0 {
+                #[cfg(any(feature = "log", feature = "defmt"))]
                 error!(
                     "Year {} is too early! must be greater than 1999",
                     datetime.year()
@@ -95,20 +103,24 @@ impl DS3231DateTime {
                 return Err(DS3231DateTimeError::YearNotAfter1999);
             }
             let mut year = year.unsigned_abs() as u8;
+            #[cfg(any(feature = "log", feature = "defmt"))]
             debug!("unsigned raw year={}", year);
             if year > 99 {
                 year -= 100;
                 month.set_century(true);
             }
+            #[cfg(any(feature = "log", feature = "defmt"))]
             debug!("year={} month={:?}", year, month);
             let ones = year % 10;
             let tens = year / 10;
+            #[cfg(any(feature = "log", feature = "defmt"))]
             debug!("ones={} tens={}", ones, tens);
             let mut value = Year::default();
             value.set_year(ones);
             value.set_ten_year(tens);
             value
         };
+        #[cfg(any(feature = "log", feature = "defmt"))]
         debug!("year={:?}", year);
         let raw = DS3231DateTime {
             seconds,
@@ -119,6 +131,7 @@ impl DS3231DateTime {
             month,
             year,
         };
+        #[cfg(any(feature = "log", feature = "defmt"))]
         debug!("raw={:?}", raw);
         Ok(raw)
     }
@@ -137,6 +150,7 @@ impl DS3231DateTime {
                 hours + 12 * u32::from(self.hours.pm_or_twenty_hours())
             }
         };
+        #[cfg(any(feature = "log", feature = "defmt"))]
         debug!(
             "raw_hour={:?} h={} m={} s={}",
             self.hours, hours, minutes, seconds

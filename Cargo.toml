@@ -10,9 +10,12 @@ bitfield = { version = "0.15.0" }
 chrono = { version = "0.4", default-features = false, features = [] }
 embedded-hal = {version = "=1.0.0"}
 embedded-hal-async = {version = "=1.0.0"}
-log = { version = "0.4.20" }
+log = { version = "0.4.20", optional = true }
+defmt = { version = "0.3.8", optional = true }
 paste = { version = "1.0.14" }
 
 [features]
 default = []
 async = []
+log = ["dep:log"]
+defmt = ["dep:defmt"]

@@ -9,10 +9,15 @@ use datetime::DS3231DateTimeError;
 use embedded_hal::i2c::I2c;
 #[cfg(feature = "async")]
 use embedded_hal_async::i2c::I2c;
+#[cfg(feature = "log")]
 use log::debug;
+#[cfg(feature = "defmt")]
+use defmt::debug;
 
 use crate::datetime::DS3231DateTime;
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
     pub time_representation: TimeRepresentation,
     pub square_wave_frequency: SquareWaveFrequency,
@@ -23,6 +28,7 @@ pub struct Config {
 
 #[allow(unused)]
 #[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RegAddr {
     Seconds = 0x00,
     Minutes = 0x01,
@@ -46,6 +52,7 @@ pub enum RegAddr {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TimeRepresentation {
     TwentyFourHour = 0,
     TwelveHour = 1,
@@ -66,6 +73,7 @@ impl From<TimeRepresentation> for u8 {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Ocillator {
     Enabled = 0,
     Disabled = 1,
@@ -86,6 +94,7 @@ impl From<Ocillator> for u8 {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InterruptControl {
     SquareWave = 0,
     Interrupt = 1,
@@ -106,6 +115,7 @@ impl From<InterruptControl> for u8 {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SquareWaveFrequency {
     Hz1 = 0b00,
     Hz1024 = 0b01,
@@ -224,6 +234,38 @@ bitfield! {
     pub alarm1_interrupt_enable, set_alarm1_interrupt_enable: 0;
 }
 from_register_u8!(Control);
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for Control {
+    fn format(&self, f: defmt::Formatter) {
+        match self.oscillator_enable() {
+            Ocillator::Enabled => defmt::write!(f, "Oscillator enabled"),
+            Ocillator::Disabled => defmt::write!(f, "Oscillator disabled"),
+        }
+        if self.battery_backed_square_wave() {
+            defmt::write!(f, ", Battery backed square wave enabled");
+        }
+        if self.convert_temperature() {
+            defmt::write!(f, ", Temperature conversion enabled");
+        }
+        match self.square_wave_frequency() {
+            SquareWaveFrequency::Hz1 => defmt::write!(f, ", 1 Hz square wave"),
+            SquareWaveFrequency::Hz1024 => defmt::write!(f, ", 1024 Hz square wave"),
+            SquareWaveFrequency::Hz4096 => defmt::write!(f, ", 4096 Hz square wave"),
+            SquareWaveFrequency::Hz8192 => defmt::write!(f, ", 8192 Hz square wave"),
+        }
+        match self.interrupt_control() {
+            InterruptControl::SquareWave => defmt::write!(f, ", Square wave output"),
+            InterruptControl::Interrupt => defmt::write!(f, ", Interrupt output"),
+        }
+        if self.alarm2_interrupt_enable() {
+            defmt::write!(f, ", Alarm 2 interrupt enabled");
+        }
+        if self.alarm1_interrupt_enable() {
+            defmt::write!(f, ", Alarm 1 interrupt enabled");
+        }
+    }
+}
 
 bitfield! {
     #[derive(Clone, Copy, Default, PartialEq)]
@@ -345,6 +387,7 @@ impl<I2C: I2c> DS3231<I2C> {
         control.set_battery_backed_square_wave(config.battery_backed_square_wave);
         control.set_square_wave_frequency(config.square_wave_frequency);
         control.set_interrupt_control(config.interrupt_control);
+        #[cfg(any(feature = "log", feature = "defmt"))]
         debug!("control: {:?}", control);
         self.set_control(control)?;
 
@@ -357,14 +400,18 @@ impl<I2C: I2c> DS3231<I2C> {
 
     #[cfg(feature = "async")]
     pub async fn configure(&mut self, config: &Config) -> Result<(), DS3231Error<I2C::Error>> {
+        #[cfg(any(feature = "log", feature = "defmt"))]
+        debug!("DS3231: reading control register");
         let mut control = self.control().await?;
         control.set_oscillator_enable(config.oscillator_enable);
         control.set_battery_backed_square_wave(config.battery_backed_square_wave);
         control.set_square_wave_frequency(config.square_wave_frequency);
         control.set_interrupt_control(config.interrupt_control);
-        debug!("control: {:?}", control);
+        #[cfg(any(feature = "log", feature = "defmt"))]
+        debug!("DS3231: writing control: {:?}", control);
         self.set_control(control).await?;
-
+        #[cfg(any(feature = "log", feature = "defmt"))]
+        debug!("DS3231: reading hours register");
         let mut hours = self.hour().await?;
         hours.set_time_representation(config.time_representation);
         self.set_hour(hours).await?;
