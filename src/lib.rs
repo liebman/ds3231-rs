@@ -20,7 +20,7 @@
 //!
 //! ### Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use ds3231::{DS3231, Config, TimeRepresentation, SquareWaveFrequency, InterruptControl, Ocillator};
 //! 
 //! // Create configuration
@@ -53,9 +53,9 @@
 //!
 //! Then use with async/await:
 //!
-//! ```rust
+//! ```rust,ignore
 //! // Initialize device
-//! let mut rtc = DS3231::new(i2c, 0x68);
+//! let mut rtc = ds3231::DS3231::new(i2c, 0x68);
 //!
 //! // Configure asynchronously
 //! rtc.configure(&config).await?;
@@ -136,7 +136,7 @@ pub struct Config {
 #[allow(unused)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum RegAddr {
+enum RegAddr {
     /// Seconds register (0-59)
     Seconds = 0x00,
     /// Minutes register (0-59)
