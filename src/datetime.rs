@@ -5,14 +5,6 @@ use chrono::NaiveDateTime;
 use chrono::NaiveTime;
 use chrono::Timelike;
 use chrono::Utc;
-#[cfg(feature = "log")]
-use log::debug;
-#[cfg(feature = "log")]
-use log::error;
-#[cfg(feature = "defmt")]
-use defmt::debug;
-#[cfg(feature = "defmt")]
-use defmt::error;
 
 use crate::Date;
 use crate::Day;
