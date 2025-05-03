@@ -1,0 +1,212 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Testing Guidelines
+
+## Unit Testing with embedded-hal-mock
+
+### Test Structure
+- Place tests in a `tests` module at the bottom of each file
+- Use feature gates to separate blocking and async tests:
+  ```rust
+  #[cfg(test)]
+  mod tests {
+      #[cfg(not(feature = "async"))]
+      mod blocking_tests {
+          // Blocking tests here
+      }
+
+      #[cfg(feature = "async")]
+      mod async_tests {
+          // Async tests here
+      }
+  }
+  ```
+
+### Mock Setup
+#### Blocking Tests
+```rust
+use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTrans};
+
+fn setup_mock(expectations: &[I2cTrans]) -> I2cMock {
+    I2cMock::new(expectations)
+}
+
+#[test]
+fn test_example() {
+    let mock = setup_mock(&[
+        I2cTrans::write_read(
+            DEVICE_ADDRESS,
+            vec![REG_ADDR],
+            vec![EXPECTED_VALUE]
+        )
+    ]);
+    let mut device = Device::new(mock, DEVICE_ADDRESS);
+    // Test implementation
+    device.i2c.done(); // Verify all expectations were met
+}
+```
+
+#### Async Tests
+```rust
+use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTrans};
+
+async fn setup_mock(expectations: &[I2cTrans]) -> I2cMock {
+    I2cMock::new(expectations)
+}
+
+#[tokio::test]
+async fn test_example() {
+    let mock = setup_mock(&[
+        I2cTrans::write_read(
+            DEVICE_ADDRESS,
+            vec![REG_ADDR],
+            vec![EXPECTED_VALUE]
+        )
+    ]).await;
+    let mut device = Device::new(mock, DEVICE_ADDRESS);
+    // Test implementation
+    device.i2c.done(); // Verify all expectations were met
+}
+```
+
+### Test Categories
+
+#### 1. Device Configuration Tests
+- Test device initialization
+- Test configuration register reads/writes
+- Test mode changes
+- Example:
+  ```rust
+  #[test]
+  fn test_new_device() {
+      let mock = setup_mock(&[]);
+      let device = Device::new(mock, DEVICE_ADDRESS);
+      device.i2c.done();
+  }
+  ```
+
+#### 2. Register Operations
+- Test individual register reads
+- Test individual register writes
+- Test register bit field operations
+- Example:
+  ```rust
+  #[test]
+  fn test_read_control() {
+      let mock = setup_mock(&[
+          I2cTrans::write_read(
+              DEVICE_ADDRESS,
+              vec![REG_ADDR],
+              vec![EXPECTED_VALUE]
+          )
+      ]);
+      let mut device = Device::new(mock, DEVICE_ADDRESS);
+      let value = device.read_control().unwrap();
+      assert_eq!(value, EXPECTED_VALUE);
+      device.i2c.done();
+  }
+  ```
+
+#### 3. Multi-Register Operations
+- Test operations spanning multiple registers
+- Test data conversion and validation
+- Example:
+  ```rust
+  #[test]
+  fn test_read_datetime() {
+      let mock = setup_mock(&[
+          I2cTrans::write_read(
+              DEVICE_ADDRESS,
+              vec![FIRST_REG],
+              vec![0x00, 0x30, 0x15, 0x04, 0x14, 0x03, 0x24]
+          )
+      ]);
+      let mut device = Device::new(mock, DEVICE_ADDRESS);
+      let dt = device.datetime().unwrap();
+      assert_eq!(dt.hour(), 15);
+      device.i2c.done();
+  }
+  ```
+
+### Best Practices
+
+1. **Mock Expectations**
+   - Define all expected I2C transactions upfront
+   - Include both successful and error cases
+   - Verify all expectations with `done()`
+
+2. **Error Handling**
+   - Test error conditions
+   - Verify error propagation
+   - Test error type conversions
+
+3. **Feature Gates**
+   - Use appropriate feature gates for async/blocking tests
+   - Test both implementations when applicable
+   - Share test utilities between implementations
+
+4. **Test Organization**
+   - Group related tests together
+   - Use descriptive test names
+   - Add comments explaining complex test scenarios
+
+5. **Test Coverage**
+   - Test edge cases
+   - Test invalid inputs
+   - Test all supported configurations
+
+### Common Patterns
+
+1. **Register Testing**
+```rust
+#[test]
+fn test_register_rw() {
+    let mock = setup_mock(&[
+        I2cTrans::write_read(ADDR, vec![REG], vec![VALUE]),
+        I2cTrans::write(ADDR, vec![REG, NEW_VALUE])
+    ]);
+    let mut dev = Device::new(mock, ADDR);
+    
+    assert_eq!(dev.read_register().unwrap(), VALUE);
+    dev.write_register(NEW_VALUE).unwrap();
+    dev.i2c.done();
+}
+```
+
+2. **Configuration Testing**
+```rust
+#[test]
+fn test_configure() {
+    let config = Config {
+        param1: Value1,
+        param2: Value2,
+    };
+    let mock = setup_mock(&[
+        I2cTrans::write(ADDR, vec![REG, CONFIG_VALUE])
+    ]);
+    let mut dev = Device::new(mock, ADDR);
+    
+    dev.configure(&config).unwrap();
+    dev.i2c.done();
+}
+```
+
+3. **Error Testing**
+```rust
+#[test]
+fn test_error_handling() {
+    let mock = setup_mock(&[
+        I2cTrans::write_read(ADDR, vec![REG], vec![INVALID_VALUE])
+    ]);
+    let mut dev = Device::new(mock, ADDR);
+    
+    assert!(matches!(
+        dev.read_register().unwrap_err(),
+        Error::InvalidValue
+    ));
+    dev.i2c.done();
+}
+```

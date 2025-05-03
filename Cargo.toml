@@ -14,8 +14,16 @@ log = { version = "0.4.20", optional = true }
 defmt = { version = "0.3.8", optional = true }
 paste = { version = "1.0.14" }
 
+[dev-dependencies]
+embedded-hal-mock = { version = "0.11.1", features = ["eh1", "embedded-hal-async"] }
+tokio = { version = "1.0", features = ["rt", "macros"] }
+
 [features]
 default = []
-async = []
+async = []  # This feature only enables async I2C support
 log = ["dep:log"]
 defmt = ["dep:defmt"]
+
+[lib]
+name = "ds3231"
+test = true  # Enable testing with std

@@ -1,0 +1,27 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Error Handling and Safety Guidelines
+
+The DS3231 driver implements robust error handling and safety features:
+
+## Error Types
+Error handling is implemented in [src/lib.rs](mdc:src/lib.rs) with a custom error enum that wraps:
+- I2C communication errors
+- DateTime validation errors
+
+## Safety Considerations
+The driver ensures safety through:
+- Strong typing for all register operations
+- Validation of all datetime values
+- Proper error propagation
+- No unsafe code usage
+
+## Best Practices
+When using this driver:
+1. Always check returned Results
+2. Use the Config struct for initialization
+3. Handle both I2C and DateTime errors appropriately
+4. Use the strongly-typed enums for configuration
