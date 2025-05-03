@@ -1,3 +1,99 @@
+//! # DS3231 Real-Time Clock (RTC) Driver
+//! 
+//! A platform-agnostic Rust driver for the DS3231 Real-Time Clock, built on the `embedded-hal` ecosystem.
+//! The DS3231 is a low-cost, extremely accurate I²C real-time clock (RTC) with an integrated 
+//! temperature-compensated crystal oscillator (TCXO) and crystal.
+//!
+//! ## Features
+//!
+//! - Both blocking and async I²C operation support
+//! - Optional logging support via `log` or `defmt`
+//!
+//! ## Usage
+//!
+//! Add this to your `Cargo.toml`:
+//!
+//! ```toml
+//! [dependencies]
+//! ds3231 = "0.1"  # Replace with actual version
+//! ```
+//!
+//! ### Example
+//!
+//! ```rust
+//! use ds3231::{DS3231, Config, TimeRepresentation, SquareWaveFrequency, InterruptControl, Ocillator};
+//! 
+//! // Create configuration
+//! let config = Config {
+//!     time_representation: TimeRepresentation::TwentyFourHour,
+//!     square_wave_frequency: SquareWaveFrequency::Hz1,
+//!     interrupt_control: InterruptControl::SquareWave,
+//!     battery_backed_square_wave: false,
+//!     oscillator_enable: Ocillator::Enabled,
+//! };
+//!
+//! // Initialize device with I2C
+//! let mut rtc = DS3231::new(i2c, 0x68);
+//! 
+//! // Configure the device
+//! rtc.configure(&config)?;
+//!
+//! // Get current date/time
+//! let datetime = rtc.datetime()?;
+//! ```
+//!
+//! ### Async Usage
+//!
+//! Enable the async feature in your `Cargo.toml`:
+//!
+//! ```toml
+//! [dependencies]
+//! ds3231 = { version = "0.1", features = ["async"] }
+//! ```
+//!
+//! Then use with async/await:
+//!
+//! ```rust
+//! // Initialize device
+//! let mut rtc = DS3231::new(i2c, 0x68);
+//!
+//! // Configure asynchronously
+//! rtc.configure(&config).await?;
+//!
+//! // Get current date/time asynchronously
+//! let datetime = rtc.datetime().await?;
+//! ```
+//!
+//! ## Features
+//!
+//! - `async` - Enables async I²C operations
+//! - `log` - Enables logging via the `log` crate
+//! - `defmt` - Enables logging via the `defmt` crate
+//!
+//! ## Register Map
+//!
+//! The driver provides access to all DS3231 registers:
+//!
+//! - Time/Date: seconds, minutes, hours, day, date, month, year
+//! - Alarms: alarm1 (seconds to day/date), alarm2 (minutes to day/date)
+//! - Control: oscillator, square wave, interrupts
+//! - Status: oscillator stop, 32kHz output, busy flags
+//! - Aging offset
+//! - Temperature
+//!
+//! ## Error Handling
+//!
+//! The driver uses a custom error type `DS3231Error` that wraps:
+//! - I²C communication errors
+//! - DateTime validation errors
+//!
+//! ## Safety
+//!
+//! This driver uses no `unsafe` code and ensures type safety through:
+//! - Strong typing for all register operations
+//! - Validation of all datetime values
+//! - Proper error propagation
+
 #![no_std]
 // MUST be the first module
 mod fmt;
