@@ -18,7 +18,7 @@
 //! ds3231 = "0.1"  # Replace with actual version
 //! ```
 //!
-//! ### Example
+//! ### Blocking Usage
 //!
 //! ```rust,ignore
 //! use ds3231::{DS3231, Config, TimeRepresentation, SquareWaveFrequency, InterruptControl, Ocillator};
@@ -54,8 +54,10 @@
 //! Then use with async/await:
 //!
 //! ```rust,ignore
+//! use ds3231::asynch::DS3231;
+//! 
 //! // Initialize device
-//! let mut rtc = ds3231::DS3231::new(i2c, 0x68);
+//! let mut rtc = DS3231::new(i2c, 0x68);
 //!
 //! // Configure asynchronously
 //! rtc.configure(&config).await?;
@@ -66,7 +68,7 @@
 //!
 //! ## Features
 //!
-//! - `async` - Enables async I²C operations
+//! - `async` - Enables optional async I²C support
 //! - `log` - Enables logging via the `log` crate
 //! - `defmt` - Enables logging via the `defmt` crate
 //!
@@ -100,15 +102,15 @@
 mod fmt;
 
 mod datetime;
+#[cfg(feature = "async")]
+pub mod asynch;
 
 use bitfield::bitfield;
 use chrono::DateTime;
 use chrono::Utc;
 use datetime::DS3231DateTimeError;
-#[cfg(not(feature = "async"))]
 use embedded_hal::i2c::I2c;
-#[cfg(feature = "async")]
-use embedded_hal_async::i2c::I2c;
+use paste::paste;
 
 use crate::datetime::DS3231DateTime;
 
@@ -296,6 +298,22 @@ impl From<SquareWaveFrequency> for u8 {
     /// Converts a SquareWaveFrequency to its raw register value.
     fn from(v: SquareWaveFrequency) -> Self {
         v as u8
+    }
+}
+
+/// Error type for DS3231 operations.
+#[derive(Debug)]
+pub enum DS3231Error<I2CE> {
+    /// I2C bus error
+    I2c(I2CE),
+    /// DateTime validation or conversion error
+    DateTime(DS3231DateTimeError),
+}
+
+impl<I2CE> From<I2CE> for DS3231Error<I2CE> {
+    /// Creates a DS3231Error from an I2C error.
+    fn from(e: I2CE) -> Self {
+        DS3231Error::I2c(e)
     }
 }
 
@@ -506,97 +524,16 @@ bitfield! {
 }
 from_register_u8!(TemperatureFraction);
 
-macro_rules! set_and_get_register {
-    ($(($name:ident, $regaddr:expr, $typ:ty)),+) => {
-        $(
-            paste::item!{
-                #[cfg(not(feature = "async"))]
-                #[doc = concat!("Sets the value of the ", stringify!($name), " register.")]
-                #[doc = "\n\n# Arguments"]
-                #[doc = concat!("* `value` - The value to write to the ", stringify!($name), " register")]
-                #[doc = "\n\n# Returns"]
-                #[doc = "* `Ok(())` on success"]
-                #[doc = "* `Err(DS3231Error)` on error"]
-                pub fn [< set_ $name >](&mut self, value: $typ) -> Result<(), DS3231Error<I2C::Error>> {
-                    self.i2c.write(
-                        self.address,
-                        &[$regaddr as u8, value.into()],
-                        )?;
-                    Ok(())
-                }
-
-                #[cfg(feature = "async")]
-                #[doc = concat!("Sets the value of the ", stringify!($name), " register (async version).")]
-                #[doc = "\n\n# Arguments"]
-                #[doc = concat!("* `value` - The value to write to the ", stringify!($name), " register")]
-                #[doc = "\n\n# Returns"]
-                #[doc = "* `Ok(())` on success"]
-                #[doc = "* `Err(DS3231Error)` on error"]
-                pub async fn [< set_ $name >](&mut self, value: $typ) -> Result<(), DS3231Error<I2C::Error>> {
-                    self.i2c.write(
-                        self.address,
-                        &[$regaddr as u8, value.into()],
-                        )
-                        .await?;
-                    Ok(())
-                }
-            }
-
-            #[cfg(not(feature = "async"))]
-            #[doc = concat!("Gets the value of the ", stringify!($name), " register.")]
-            #[doc = "\n\n# Returns"]
-            #[doc = concat!("* `Ok(", stringify!($typ), ")` - The register value on success")]
-            #[doc = "* `Err(DS3231Error)` on error"]
-            pub fn $name(&mut self) -> Result<$typ, DS3231Error<I2C::Error>> {
-                let mut data = [0];
-                self.i2c
-                    .write_read(self.address, &[$regaddr as u8], &mut data)?;
-                Ok(paste::item!([<$typ>])(data[0]))
-            }
-
-            #[cfg(feature = "async")]
-            #[doc = concat!("Gets the value of the ", stringify!($name), " register (async version).")]
-            #[doc = "\n\n# Returns"]
-            #[doc = concat!("* `Ok(", stringify!($typ), ")` - The register value on success")]
-            #[doc = "* `Err(DS3231Error)` on error"]
-            pub async fn $name(&mut self) -> Result<$typ, DS3231Error<I2C::Error>> {
-                let mut data = [0];
-                self.i2c
-                    .write_read(self.address, &[$regaddr as u8], &mut data)
-                    .await?;
-                Ok(paste::item!([<$typ>])(data[0]))
-            }
-        )+
-    }
-}
-
-/// Error type for DS3231 operations.
-#[derive(Debug)]
-pub enum DS3231Error<I2CE> {
-    /// I2C bus error
-    I2c(I2CE),
-    /// DateTime validation or conversion error
-    DateTime(DS3231DateTimeError),
-}
-
-impl<I2CE> From<I2CE> for DS3231Error<I2CE> {
-    /// Creates a DS3231Error from an I2C error.
-    fn from(e: I2CE) -> Self {
-        DS3231Error::I2c(e)
-    }
-}
-
 /// DS3231 Real-Time Clock driver.
 ///
-/// This struct provides the main interface to the DS3231 RTC device.
-/// It supports both blocking and async I2C operations through feature flags.
+/// This struct provides the blocking interface to the DS3231 RTC device.
+/// For async operations, see the [`asynch`] module.
 pub struct DS3231<I2C: I2c> {
     i2c: I2C,
     address: u8,
     time_representation: TimeRepresentation,
 }
 
-#[allow(unused)]
 impl<I2C: I2c> DS3231<I2C> {
     /// Creates a new DS3231 driver instance.
     ///
@@ -619,7 +556,6 @@ impl<I2C: I2c> DS3231<I2C> {
     /// # Returns
     /// * `Ok(())` on success
     /// * `Err(DS3231Error)` on error
-    #[cfg(not(feature = "async"))]
     pub fn configure(&mut self, config: &Config) -> Result<(), DS3231Error<I2C::Error>> {
         let mut control = self.control()?;
         control.set_oscillator_enable(config.oscillator_enable);
@@ -637,36 +573,6 @@ impl<I2C: I2c> DS3231<I2C> {
         Ok(())
     }
 
-    /// Configures the device according to the provided configuration (async version).
-    ///
-    /// # Arguments
-    /// * `config` - The configuration to apply
-    ///
-    /// # Returns
-    /// * `Ok(())` on success
-    /// * `Err(DS3231Error)` on error
-    #[cfg(feature = "async")]
-    pub async fn configure(&mut self, config: &Config) -> Result<(), DS3231Error<I2C::Error>> {
-        #[cfg(any(feature = "log", feature = "defmt"))]
-        debug!("DS3231: reading control register");
-        let mut control = self.control().await?;
-        control.set_oscillator_enable(config.oscillator_enable);
-        control.set_battery_backed_square_wave(config.battery_backed_square_wave);
-        control.set_square_wave_frequency(config.square_wave_frequency);
-        control.set_interrupt_control(config.interrupt_control);
-        #[cfg(any(feature = "log", feature = "defmt"))]
-        debug!("DS3231: writing control: {:?}", control);
-        self.set_control(control).await?;
-        #[cfg(any(feature = "log", feature = "defmt"))]
-        debug!("DS3231: reading hours register");
-        let mut hours = self.hour().await?;
-        hours.set_time_representation(config.time_representation);
-        self.set_hour(hours).await?;
-        self.time_representation = config.time_representation;
-        Ok(())
-    }
-
-    #[cfg(not(feature = "async"))]
     /// Reads the raw datetime registers from the device.
     ///
     /// # Returns
@@ -679,21 +585,6 @@ impl<I2C: I2c> DS3231<I2C> {
         Ok(data.into())
     }
 
-    #[cfg(feature = "async")]
-    /// Reads the raw datetime registers from the device (async version).
-    ///
-    /// # Returns
-    /// * `Ok(DS3231DateTime)` - The raw datetime values on success
-    /// * `Err(DS3231Error)` on error
-    async fn read_raw_datetime(&mut self) -> Result<DS3231DateTime, DS3231Error<I2C::Error>> {
-        let mut data = [0; 7];
-        self.i2c
-            .write_read(self.address, &[RegAddr::Seconds as u8], &mut data)
-            .await?;
-        Ok(data.into())
-    }
-
-    #[cfg(not(feature = "async"))]
     /// Writes raw datetime values to the device registers.
     ///
     /// # Arguments
@@ -723,57 +614,13 @@ impl<I2C: I2c> DS3231<I2C> {
         Ok(())
     }
 
-    #[cfg(feature = "async")]
-    /// Writes raw datetime values to the device registers (async version).
-    ///
-    /// # Arguments
-    /// * `datetime` - The raw datetime values to write
-    ///
-    /// # Returns
-    /// * `Ok(())` on success
-    /// * `Err(DS3231Error)` on error
-    async fn write_raw_datetime(
-        &mut self,
-        datetime: &DS3231DateTime,
-    ) -> Result<(), DS3231Error<I2C::Error>> {
-        let data: [u8; 7] = datetime.into();
-        self.i2c
-            .write(
-                self.address,
-                &[
-                    RegAddr::Seconds as u8,
-                    data[0],
-                    data[1],
-                    data[2],
-                    data[3],
-                    data[4],
-                    data[5],
-                    data[6],
-                ],
-            )
-            .await?;
-        Ok(())
-    }
-
     /// Gets the current date and time from the device.
     ///
     /// # Returns
     /// * `Ok(DateTime<Utc>)` - The current date and time in UTC
     /// * `Err(DS3231Error)` on error
-    #[cfg(not(feature = "async"))]
     pub fn datetime(&mut self) -> Result<DateTime<Utc>, DS3231Error<I2C::Error>> {
         let raw = self.read_raw_datetime()?;
-        raw.into_datetime().map_err(DS3231Error::DateTime)
-    }
-
-    /// Gets the current date and time from the device (async version).
-    ///
-    /// # Returns
-    /// * `Ok(DateTime<Utc>)` - The current date and time in UTC
-    /// * `Err(DS3231Error)` on error
-    #[cfg(feature = "async")]
-    pub async fn datetime(&mut self) -> Result<DateTime<Utc>, DS3231Error<I2C::Error>> {
-        let raw = self.read_raw_datetime().await?;
         raw.into_datetime().map_err(DS3231Error::DateTime)
     }
 
@@ -785,7 +632,6 @@ impl<I2C: I2c> DS3231<I2C> {
     /// # Returns
     /// * `Ok(())` on success
     /// * `Err(DS3231Error)` on error
-    #[cfg(not(feature = "async"))]
     pub fn set_datetime(
         &mut self,
         datetime: &DateTime<Utc>,
@@ -795,37 +641,54 @@ impl<I2C: I2c> DS3231<I2C> {
         self.write_raw_datetime(&raw)?;
         Ok(())
     }
-
-    /// Sets the current date and time on the device (async version).
-    ///
-    /// # Arguments
-    /// * `datetime` - The date and time to set
-    ///
-    /// # Returns
-    /// * `Ok(())` on success
-    /// * `Err(DS3231Error)` on error
-    #[cfg(feature = "async")]
-    pub async fn set_datetime(
-        &mut self,
-        datetime: &DateTime<Utc>,
-    ) -> Result<(), DS3231Error<I2C::Error>> {
-        let raw = DS3231DateTime::from_datetime(datetime, self.time_representation)
-            .map_err(DS3231Error::DateTime)?;
-        self.write_raw_datetime(&raw).await?;
-        Ok(())
-    }
-
-    set_and_get_register!(
-        (second, RegAddr::Seconds, Seconds),
-        (minute, RegAddr::Minutes, Minutes),
-        (hour, RegAddr::Hours, Hours),
-        (date, RegAddr::Date, Date),
-        (month, RegAddr::Month, Month),
-        (year, RegAddr::Year, Year),
-        (control, RegAddr::Control, Control),
-        (status, RegAddr::ControlStatus, Status)
-    );
 }
+
+// Register access implementations
+macro_rules! impl_register_access {
+    ($(($name:ident, $regaddr:expr, $typ:ty)),+) => {
+        impl<I2C: I2c> DS3231<I2C> {
+            $(
+                paste! {
+                    #[doc = concat!("Gets the value of the ", stringify!($name), " register.")]
+                    #[doc = "\n\n# Returns"]
+                    #[doc = concat!("* `Ok(", stringify!($typ), ")` - The register value on success")]
+                    #[doc = "* `Err(DS3231Error)` on error"]
+                    pub fn $name(&mut self) -> Result<$typ, DS3231Error<I2C::Error>> {
+                        let mut data = [0];
+                        self.i2c
+                            .write_read(self.address, &[$regaddr as u8], &mut data)?;
+                        Ok($typ(data[0]))
+                    }
+
+                    #[doc = concat!("Sets the value of the ", stringify!($name), " register.")]
+                    #[doc = "\n\n# Arguments"]
+                    #[doc = concat!("* `value` - The value to write to the ", stringify!($name), " register")]
+                    #[doc = "\n\n# Returns"]
+                    #[doc = "* `Ok(())` on success"]
+                    #[doc = "* `Err(DS3231Error)` on error"]
+                    pub fn [<set_ $name>](&mut self, value: $typ) -> Result<(), DS3231Error<I2C::Error>> {
+                        self.i2c.write(
+                            self.address,
+                            &[$regaddr as u8, value.into()],
+                        )?;
+                        Ok(())
+                    }
+                }
+            )+
+        }
+    }
+}
+
+impl_register_access!(
+    (second, RegAddr::Seconds, Seconds),
+    (minute, RegAddr::Minutes, Minutes),
+    (hour, RegAddr::Hours, Hours),
+    (date, RegAddr::Date, Date),
+    (month, RegAddr::Month, Month),
+    (year, RegAddr::Year, Year),
+    (control, RegAddr::Control, Control),
+    (status, RegAddr::ControlStatus, Status)
+);
 
 #[cfg(test)]
 mod tests {
@@ -833,19 +696,15 @@ mod tests {
     use alloc::vec;
     
     use super::*;
-    #[cfg(not(feature = "async"))]
     use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTrans};    
-    #[cfg(not(feature = "async"))]
     use chrono::Timelike;
 
     const DEVICE_ADDRESS: u8 = 0x68;
 
-    #[cfg(not(feature = "async"))]
     fn setup_mock(expectations: &[I2cTrans]) -> I2cMock {
         I2cMock::new(expectations)
     }
 
-    #[cfg(not(feature = "async"))]
     #[test]
     fn test_new_device() {
         let mock = setup_mock(&[]);
@@ -854,7 +713,6 @@ mod tests {
         _dev.i2c.done();
     }
 
-    #[cfg(not(feature = "async"))]
     #[test]
     fn test_read_control() {
         // Control register value: oscillator enabled, 1Hz square wave (bits 4,3 = 0b00)
@@ -875,7 +733,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[cfg(not(feature = "async"))]
     #[test]
     fn test_write_control() {
         let mut control = Control::default();
@@ -894,7 +751,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[cfg(not(feature = "async"))]
     #[test]
     fn test_read_datetime() {
         let datetime_registers = [
@@ -921,74 +777,5 @@ mod tests {
         assert_eq!(dt.minute(), 30);
         assert_eq!(dt.second(), 0);
         dev.i2c.done();
-    }
-
-    #[cfg(feature = "async")]
-    mod async_tests {
-        use super::*;
-        use embedded_hal_mock::eh1::i2c::Transaction as I2cTrans;
-        use embedded_hal_mock::eh1::i2c::Mock;
-        
-        async fn setup_mock(expectations: &[I2cTrans]) -> Mock {
-            Mock::new(expectations)
-        }
-
-        #[tokio::test]
-        async fn test_async_read_control() {
-            let expected = 0b0000_0000;  // Hz1 frequency (0b00 in bits 4,3)
-            let mock = setup_mock(&[
-                I2cTrans::write_read(
-                    DEVICE_ADDRESS,
-                    vec![RegAddr::Control as u8],
-                    vec![expected]
-                )
-            ]).await;
-            let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
-            
-            let control = dev.control().await.unwrap();
-            assert_eq!(control.oscillator_enable(), Ocillator::Enabled);
-            assert_eq!(control.square_wave_frequency(), SquareWaveFrequency::Hz1);
-            dev.i2c.done();
-        }
-
-        #[tokio::test]
-        async fn test_async_configure() {
-            let config = Config {
-                time_representation: TimeRepresentation::TwentyFourHour,
-                square_wave_frequency: SquareWaveFrequency::Hz1,
-                interrupt_control: InterruptControl::SquareWave,
-                battery_backed_square_wave: false,
-                oscillator_enable: Ocillator::Enabled,
-            };
-
-            let mock = setup_mock(&[
-                // Read control register
-                I2cTrans::write_read(
-                    DEVICE_ADDRESS,
-                    vec![RegAddr::Control as u8],
-                    vec![0]
-                ),
-                // Write control register with Hz1 frequency (0b00 in bits 4,3)
-                I2cTrans::write(
-                    DEVICE_ADDRESS,
-                    vec![RegAddr::Control as u8, 0b0000_0000]
-                ),
-                // Read hours register
-                I2cTrans::write_read(
-                    DEVICE_ADDRESS,
-                    vec![RegAddr::Hours as u8],
-                    vec![0]
-                ),
-                // Write hours register
-                I2cTrans::write(
-                    DEVICE_ADDRESS,
-                    vec![RegAddr::Hours as u8, 0]
-                )
-            ]).await;
-            
-            let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
-            dev.configure(&config).await.unwrap();
-            dev.i2c.done();
-        }
     }
 }
