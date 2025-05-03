@@ -1,4 +1,7 @@
 #![no_std]
+// MUST be the first module
+mod fmt;
+
 mod datetime;
 
 use bitfield::bitfield;
@@ -9,10 +12,6 @@ use datetime::DS3231DateTimeError;
 use embedded_hal::i2c::I2c;
 #[cfg(feature = "async")]
 use embedded_hal_async::i2c::I2c;
-#[cfg(feature = "log")]
-use log::debug;
-#[cfg(feature = "defmt")]
-use defmt::debug;
 
 use crate::datetime::DS3231DateTime;
 
@@ -357,13 +356,6 @@ impl<I2CE> From<I2CE> for DS3231Error<I2CE> {
     }
 }
 
-// impl<I2CE> From<DS3231DateTimeError> for DS3231Error<I2CE>
-// {
-//     fn from(e: DS3231DateTimeError) -> Self {
-//         DS3231Error::DateTime(e)
-//     }
-// }
-
 pub struct DS3231<I2C: I2c> {
     i2c: I2C,
     address: u8,
@@ -454,7 +446,7 @@ impl<I2C: I2c> DS3231<I2C> {
                 data[5],
                 data[6],
             ],
-        );
+        )?;
         Ok(())
     }
 
@@ -495,7 +487,7 @@ impl<I2C: I2c> DS3231<I2C> {
     }
 
     #[cfg(not(feature = "async"))]
-    pub async fn set_datetime(
+    pub fn set_datetime(
         &mut self,
         datetime: &DateTime<Utc>,
     ) -> Result<(), DS3231Error<I2C::Error>> {
@@ -526,4 +518,170 @@ impl<I2C: I2c> DS3231<I2C> {
         (control, RegAddr::Control, Control),
         (status, RegAddr::ControlStatus, Status)
     );
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate alloc;
+    use alloc::vec;
+    
+    use super::*;
+    #[cfg(not(feature = "async"))]
+    use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTrans};    
+    #[cfg(not(feature = "async"))]
+    use chrono::Timelike;
+
+    const DEVICE_ADDRESS: u8 = 0x68;
+
+    #[cfg(not(feature = "async"))]
+    fn setup_mock(expectations: &[I2cTrans]) -> I2cMock {
+        I2cMock::new(expectations)
+    }
+
+    #[cfg(not(feature = "async"))]
+    #[test]
+    fn test_new_device() {
+        let mock = setup_mock(&[]);
+        let mut _dev = DS3231::new(mock, DEVICE_ADDRESS);
+        // No I2C operations should happen during initialization
+        _dev.i2c.done();
+    }
+
+    #[cfg(not(feature = "async"))]
+    #[test]
+    fn test_read_control() {
+        // Control register value: oscillator enabled, 1Hz square wave (bits 4,3 = 0b00)
+        let expected = 0b0000_0000;  // Hz1 frequency (0b00 in bits 4,3)
+        let mock = setup_mock(&[
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Control as u8],
+                vec![expected]
+            )
+        ]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+        
+        let control = dev.control().unwrap();
+        assert_eq!(control.oscillator_enable(), Ocillator::Enabled);
+        assert_eq!(control.square_wave_frequency(), SquareWaveFrequency::Hz1);
+        assert_eq!(control.interrupt_control(), InterruptControl::SquareWave);
+        dev.i2c.done();
+    }
+
+    #[cfg(not(feature = "async"))]
+    #[test]
+    fn test_write_control() {
+        let mut control = Control::default();
+        control.set_oscillator_enable(Ocillator::Enabled);
+        control.set_square_wave_frequency(SquareWaveFrequency::Hz1024);
+        
+        let mock = setup_mock(&[
+            I2cTrans::write(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Control as u8, control.0]
+            )
+        ]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+        
+        dev.set_control(control).unwrap();
+        dev.i2c.done();
+    }
+
+    #[cfg(not(feature = "async"))]
+    #[test]
+    fn test_read_datetime() {
+        let datetime_registers = [
+            0x00,
+            0x30,
+            0x15,
+            0x04,
+            0x14,
+            0x03,
+            0x24
+        ];
+        
+        let mock = setup_mock(&[
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Seconds as u8],
+                datetime_registers.to_vec()
+            )
+        ]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+        
+        let dt = dev.datetime().unwrap();
+        assert_eq!(dt.hour(), 15);
+        assert_eq!(dt.minute(), 30);
+        assert_eq!(dt.second(), 0);
+        dev.i2c.done();
+    }
+
+    #[cfg(feature = "async")]
+    mod async_tests {
+        use super::*;
+        use embedded_hal_mock::eh1::i2c::Transaction as I2cTrans;
+        use embedded_hal_mock::eh1::i2c::Mock;
+        
+        async fn setup_mock(expectations: &[I2cTrans]) -> Mock {
+            Mock::new(expectations)
+        }
+
+        #[tokio::test]
+        async fn test_async_read_control() {
+            let expected = 0b0000_0000;  // Hz1 frequency (0b00 in bits 4,3)
+            let mock = setup_mock(&[
+                I2cTrans::write_read(
+                    DEVICE_ADDRESS,
+                    vec![RegAddr::Control as u8],
+                    vec![expected]
+                )
+            ]).await;
+            let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+            
+            let control = dev.control().await.unwrap();
+            assert_eq!(control.oscillator_enable(), Ocillator::Enabled);
+            assert_eq!(control.square_wave_frequency(), SquareWaveFrequency::Hz1);
+            dev.i2c.done();
+        }
+
+        #[tokio::test]
+        async fn test_async_configure() {
+            let config = Config {
+                time_representation: TimeRepresentation::TwentyFourHour,
+                square_wave_frequency: SquareWaveFrequency::Hz1,
+                interrupt_control: InterruptControl::SquareWave,
+                battery_backed_square_wave: false,
+                oscillator_enable: Ocillator::Enabled,
+            };
+
+            let mock = setup_mock(&[
+                // Read control register
+                I2cTrans::write_read(
+                    DEVICE_ADDRESS,
+                    vec![RegAddr::Control as u8],
+                    vec![0]
+                ),
+                // Write control register with Hz1 frequency (0b00 in bits 4,3)
+                I2cTrans::write(
+                    DEVICE_ADDRESS,
+                    vec![RegAddr::Control as u8, 0b0000_0000]
+                ),
+                // Read hours register
+                I2cTrans::write_read(
+                    DEVICE_ADDRESS,
+                    vec![RegAddr::Hours as u8],
+                    vec![0]
+                ),
+                // Write hours register
+                I2cTrans::write(
+                    DEVICE_ADDRESS,
+                    vec![RegAddr::Hours as u8, 0]
+                )
+            ]).await;
+            
+            let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+            dev.configure(&config).await.unwrap();
+            dev.i2c.done();
+        }
+    }
 }
