@@ -683,11 +683,22 @@ impl_register_access!(
     (second, RegAddr::Seconds, Seconds),
     (minute, RegAddr::Minutes, Minutes),
     (hour, RegAddr::Hours, Hours),
+    (day, RegAddr::Day, Day),
     (date, RegAddr::Date, Date),
     (month, RegAddr::Month, Month),
     (year, RegAddr::Year, Year),
+    (alarm1_second, RegAddr::Alarm1Seconds, Seconds),
+    (alarm1_minute, RegAddr::Alarm1Minutes, Minutes),
+    (alarm1_hour, RegAddr::Alarm1Hours, Hours),
+    (alarm1_day_date, RegAddr::Alarm1DayDate, Date),
+    (alarm2_minute, RegAddr::Alarm2Minutes, Minutes),
+    (alarm2_hour, RegAddr::Alarm2Hours, Hours),
+    (alarm2_day_date, RegAddr::Alarm2DayDate, Date),
     (control, RegAddr::Control, Control),
-    (status, RegAddr::ControlStatus, Status)
+    (status, RegAddr::ControlStatus, Status),
+    (aging_offset, RegAddr::AgingOffset, AgingOffset),
+    (temperature, RegAddr::MSBTemp, Temperature),
+    (temperature_fraction, RegAddr::LSBTemp, TemperatureFraction)
 );
 
 #[cfg(test)]
@@ -776,6 +787,33 @@ mod tests {
         assert_eq!(dt.hour(), 15);
         assert_eq!(dt.minute(), 30);
         assert_eq!(dt.second(), 0);
+        dev.i2c.done();
+    }
+
+    #[test]
+    fn test_read_temperature() {
+        // Temperature value: 25°C (0x19) with fraction 0x60 (0.375°C)
+        let expected_msb = 0x19;  // 25°C
+        let expected_lsb = 0x60;  // 0.375°C
+        
+        let mock = setup_mock(&[
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::MSBTemp as u8],
+                vec![expected_msb]
+            ),
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::LSBTemp as u8],
+                vec![expected_lsb]
+            )
+        ]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+        
+        let temp = dev.temperature().unwrap();
+        let frac = dev.temperature_fraction().unwrap();
+        assert_eq!(temp.temperature(), 25);
+        assert_eq!(frac.temperature_fraction(), 0x60);
         dev.i2c.done();
     }
 }

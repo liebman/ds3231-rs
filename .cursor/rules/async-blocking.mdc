@@ -7,19 +7,31 @@ alwaysApply: true
 
 The DS3231 driver supports both blocking and async I2C operations through a feature-based approach.
 
+## Core Requirements
+1. All functionality must be identical between blocking and async implementations
+2. Every method available in blocking mode must have an async counterpart
+3. Both implementations must maintain feature parity at all times
+4. Error handling must be consistent between both modes
+5. Tests must verify identical behavior in both modes
+
 ## Implementation Pattern
 In [src/lib.rs](mdc:src/lib.rs), the dual implementation is achieved through:
 - Conditional compilation with #[cfg(feature = "async")]
 - Shared types and structures
 - Parallel method implementations
+- Identical public interfaces
 
 ## Key Components
 - Base driver struct remains the same
 - Methods are conditionally compiled
 - Error types handle both variants
 - Configuration is shared between modes
+- All register operations available in both modes
+- All features accessible through both interfaces
 
 ## Usage Guidelines
 1. Enable the "async" feature for async support
 2. Use appropriate embedded-hal or embedded-hal-async trait implementations
 3. Error handling remains consistent between modes
+4. All functionality must be accessible regardless of chosen mode
+5. Documentation must cover both implementations equally
