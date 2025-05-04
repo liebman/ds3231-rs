@@ -1,6 +1,6 @@
 [advisories]
-# paste crate is no longer maintained
 ignore = [
+    # paste crate is no longer maintained, but the author considers it finished
     "RUSTSEC-2024-0436"
 ]
 
