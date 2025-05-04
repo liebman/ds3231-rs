@@ -78,7 +78,7 @@
 //!
 //! The driver uses a custom error type `DS3231Error` that wraps:
 //! - I²C communication errors
-//! - DateTime validation errors
+//! - `DateTime` validation errors
 //!
 //! ## Safety
 //!
@@ -89,6 +89,8 @@
 
 #![no_std]
 #![warn(missing_docs)]
+#![warn(clippy::all)]
+#![warn(clippy::pedantic)]
 // MUST be the first module
 mod fmt;
 
@@ -179,7 +181,7 @@ pub enum TimeRepresentation {
     TwelveHour = 1,
 }
 impl From<u8> for TimeRepresentation {
-    /// Creates a TimeRepresentation from a raw register value.
+    /// Creates a `TimeRepresentation` from a raw register value.
     ///
     /// # Panics
     /// Panics if the value is not 0 or 1.
@@ -192,7 +194,7 @@ impl From<u8> for TimeRepresentation {
     }
 }
 impl From<TimeRepresentation> for u8 {
-    /// Converts a TimeRepresentation to its raw register value.
+    /// Converts a `TimeRepresentation` to its raw register value.
     fn from(v: TimeRepresentation) -> Self {
         v as u8
     }
@@ -237,7 +239,7 @@ pub enum InterruptControl {
     Interrupt = 1,
 }
 impl From<u8> for InterruptControl {
-    /// Creates an InterruptControl from a raw register value.
+    /// Creates an `InterruptControl` from a raw register value.
     ///
     /// # Panics
     /// Panics if the value is not 0 or 1.
@@ -250,7 +252,7 @@ impl From<u8> for InterruptControl {
     }
 }
 impl From<InterruptControl> for u8 {
-    /// Converts an InterruptControl to its raw register value.
+    /// Converts an `InterruptControl` to its raw register value.
     fn from(v: InterruptControl) -> Self {
         v as u8
     }
@@ -270,7 +272,7 @@ pub enum SquareWaveFrequency {
     Hz8192 = 0b11,
 }
 impl From<u8> for SquareWaveFrequency {
-    /// Creates a SquareWaveFrequency from a raw register value.
+    /// Creates a `SquareWaveFrequency` from a raw register value.
     ///
     /// # Panics
     /// Panics if the value is not 0b00, 0b01, 0b10, or 0b11.
@@ -285,7 +287,7 @@ impl From<u8> for SquareWaveFrequency {
     }
 }
 impl From<SquareWaveFrequency> for u8 {
-    /// Converts a SquareWaveFrequency to its raw register value.
+    /// Converts a `SquareWaveFrequency` to its raw register value.
     fn from(v: SquareWaveFrequency) -> Self {
         v as u8
     }
@@ -296,12 +298,12 @@ impl From<SquareWaveFrequency> for u8 {
 pub enum DS3231Error<I2CE> {
     /// I2C bus error
     I2c(I2CE),
-    /// DateTime validation or conversion error
+    /// `DateTime` validation or conversion error
     DateTime(DS3231DateTimeError),
 }
 
 impl<I2CE> From<I2CE> for DS3231Error<I2CE> {
-    /// Creates a DS3231Error from an I2C error.
+    /// Creates a `DS3231Error` from an I2C error.
     fn from(e: I2CE) -> Self {
         DS3231Error::I2c(e)
     }
@@ -546,6 +548,9 @@ impl<I2C: I2c> DS3231<I2C> {
     /// # Returns
     /// * `Ok(())` on success
     /// * `Err(DS3231Error)` on error
+    ///
+    /// # Errors
+    /// Returns `DS3231Error::I2c` if there is an I2C communication error.
     pub fn configure(&mut self, config: &Config) -> Result<(), DS3231Error<I2C::Error>> {
         let mut control = self.control()?;
         control.set_oscillator_enable(config.oscillator_enable);
@@ -585,9 +590,9 @@ impl<I2C: I2c> DS3231<I2C> {
     /// * `Err(DS3231Error)` on error
     fn write_raw_datetime(
         &mut self,
-        datetime: &DS3231DateTime,
+        datetime: DS3231DateTime,
     ) -> Result<(), DS3231Error<I2C::Error>> {
-        let data: [u8; 7] = datetime.into();
+        let data: [u8; 7] = (&datetime).into();
         self.i2c.write(
             self.address,
             &[
@@ -609,6 +614,10 @@ impl<I2C: I2c> DS3231<I2C> {
     /// # Returns
     /// * `Ok(NaiveDateTime)` - The current date and time
     /// * `Err(DS3231Error)` on error
+    ///
+    /// # Errors
+    /// * Returns `DS3231Error::I2c` if there is an I2C communication error
+    /// * Returns `DS3231Error::DateTime` if the device returns invalid date/time data
     pub fn datetime(&mut self) -> Result<NaiveDateTime, DS3231Error<I2C::Error>> {
         let raw = self.read_raw_datetime()?;
         raw.into_datetime().map_err(DS3231Error::DateTime)
@@ -622,13 +631,17 @@ impl<I2C: I2c> DS3231<I2C> {
     /// # Returns
     /// * `Ok(())` on success
     /// * `Err(DS3231Error)` on error
+    ///
+    /// # Errors
+    /// * Returns `DS3231Error::I2c` if there is an I2C communication error
+    /// * Returns `DS3231Error::DateTime` if the provided datetime is invalid for the device
     pub fn set_datetime(
         &mut self,
         datetime: &NaiveDateTime,
     ) -> Result<(), DS3231Error<I2C::Error>> {
         let raw = DS3231DateTime::from_datetime(datetime, self.time_representation)
             .map_err(DS3231Error::DateTime)?;
-        self.write_raw_datetime(&raw)?;
+        self.write_raw_datetime(raw)?;
         Ok(())
     }
 }
@@ -643,6 +656,8 @@ macro_rules! impl_register_access {
                     #[doc = "\n\n# Returns"]
                     #[doc = concat!("* `Ok(", stringify!($typ), ")` - The register value on success")]
                     #[doc = "* `Err(DS3231Error)` on error"]
+                    #[doc = "\n\n# Errors"]
+                    #[doc = "Returns `DS3231Error::I2c` if there is an I2C communication error"]
                     pub fn $name(&mut self) -> Result<$typ, DS3231Error<I2C::Error>> {
                         let mut data = [0];
                         self.i2c
@@ -656,6 +671,8 @@ macro_rules! impl_register_access {
                     #[doc = "\n\n# Returns"]
                     #[doc = "* `Ok(())` on success"]
                     #[doc = "* `Err(DS3231Error)` on error"]
+                    #[doc = "\n\n# Errors"]
+                    #[doc = "Returns `DS3231Error::I2c` if there is an I2C communication error"]
                     pub fn [<set_ $name>](&mut self, value: $typ) -> Result<(), DS3231Error<I2C::Error>> {
                         self.i2c.write(
                             self.address,
