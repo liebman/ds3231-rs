@@ -1,9 +1,15 @@
 [package]
 name = "ds3231"
 version = "0.1.0"
-authors = ["liebman <liebman@zod.com>"]
+authors = ["Christopher B. Liebman <liebman@zod.com>"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
+description = "A platform-agnostic driver for the DS3231 precision real-time clock"
+repository = "https://github.com/liebman/ds3231-rs"
+documentation = "https://docs.rs/ds3231"
+keywords = ["embedded", "rtc", "ds3231", "i2c", "no-std"]
+categories = ["embedded", "no-std", "hardware-support"]
+readme = "README.md"
 
 [dependencies]
 bitfield = { version = "0.15.0" }
