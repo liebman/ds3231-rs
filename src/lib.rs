@@ -706,7 +706,7 @@ mod tests {
     use alloc::vec;
 
     use super::*;
-    use chrono::Timelike;
+    use chrono::{Datelike, NaiveDate, Timelike};
     use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTrans};
 
     const DEVICE_ADDRESS: u8 = 0x68;
@@ -758,8 +758,43 @@ mod tests {
     }
 
     #[test]
+    fn test_configure() {
+        let config = Config {
+            time_representation: TimeRepresentation::TwentyFourHour,
+            square_wave_frequency: SquareWaveFrequency::Hz1,
+            interrupt_control: InterruptControl::SquareWave,
+            battery_backed_square_wave: false,
+            oscillator_enable: Ocillator::Enabled,
+        };
+
+        let mock = setup_mock(&[
+            // Read control register
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Control as u8], vec![0]),
+            // Write control register with Hz1 frequency (0b00 in bits 4,3)
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Control as u8, 0b0000_0000]),
+            // Read hours register
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Hours as u8], vec![0]),
+            // Write hours register
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Hours as u8, 0]),
+        ]);
+
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+        dev.configure(&config).unwrap();
+        dev.i2c.done();
+    }
+
+    #[test]
     fn test_read_datetime() {
-        let datetime_registers = [0x00, 0x30, 0x15, 0x04, 0x14, 0x03, 0x24];
+        // 2024-03-14 15:30:00
+        let datetime_registers = [
+            0x00, // seconds
+            0x30, // minutes
+            0x15, // hours (24-hour mode)
+            0x04, // day (Thursday)
+            0x14, // date
+            0x03, // month
+            0x24, // year
+        ];
 
         let mock = setup_mock(&[I2cTrans::write_read(
             DEVICE_ADDRESS,
@@ -772,6 +807,73 @@ mod tests {
         assert_eq!(dt.hour(), 15);
         assert_eq!(dt.minute(), 30);
         assert_eq!(dt.second(), 0);
+        assert_eq!(dt.day(), 14);
+        assert_eq!(dt.month(), 3);
+        assert_eq!(dt.year(), 2024);
+        dev.i2c.done();
+    }
+
+    #[test]
+    fn test_set_datetime() {
+        let dt = NaiveDate::from_ymd_opt(2024, 3, 14)
+            .unwrap()
+            .and_hms_opt(15, 30, 0)
+            .unwrap();
+
+        let mock = setup_mock(&[I2cTrans::write(
+            DEVICE_ADDRESS,
+            vec![
+                RegAddr::Seconds as u8,
+                0x00, // seconds
+                0x30, // minutes (BCD for 30)
+                0x15, // hours (BCD for 15 in 24-hour mode)
+                0x04, // day (Thursday)
+                0x14, // date
+                0x03, // month
+                0x24, // year
+            ],
+        )]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        dev.set_datetime(&dt).unwrap();
+        dev.i2c.done();
+    }
+
+    #[test]
+    fn test_register_operations() {
+        let mock = setup_mock(&[
+            // Test second register
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Seconds as u8], vec![0x45]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Seconds as u8, 0x30]),
+            // Test minute register
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Minutes as u8], vec![0x30]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Minutes as u8, 0x45]),
+            // Test status register
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::ControlStatus as u8],
+                vec![0x80],
+            ),
+        ]);
+
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        // Test seconds
+        let seconds = dev.second().unwrap();
+        assert_eq!(seconds.seconds(), 5);
+        assert_eq!(seconds.ten_seconds(), 4);
+        dev.set_second(Seconds(0x30)).unwrap();
+
+        // Test minutes
+        let minutes = dev.minute().unwrap();
+        assert_eq!(minutes.minutes(), 0);
+        assert_eq!(minutes.ten_minutes(), 3);
+        dev.set_minute(Minutes(0x45)).unwrap();
+
+        // Test status
+        let status = dev.status().unwrap();
+        assert!(status.oscillator_stop_flag());
+
         dev.i2c.done();
     }
 
