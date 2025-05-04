@@ -19,7 +19,7 @@
 //! let datetime = rtc.datetime().await?;
 //! ```
 
-use chrono::{DateTime, Utc};
+use chrono::NaiveDateTime;
 use embedded_hal_async::i2c::I2c;
 use paste::paste;
 
@@ -127,9 +127,9 @@ impl<I2C: I2c> DS3231<I2C> {
     /// Gets the current date and time from the device.
     ///
     /// # Returns
-    /// * `Ok(DateTime<Utc>)` - The current date and time in UTC
+    /// * `Ok(NaiveDateTime)` - The current date and time
     /// * `Err(DS3231Error)` on error
-    pub async fn datetime(&mut self) -> Result<DateTime<Utc>, DS3231Error<I2C::Error>> {
+    pub async fn datetime(&mut self) -> Result<NaiveDateTime, DS3231Error<I2C::Error>> {
         let raw = self.read_raw_datetime().await?;
         raw.into_datetime().map_err(DS3231Error::DateTime)
     }
@@ -144,7 +144,7 @@ impl<I2C: I2c> DS3231<I2C> {
     /// * `Err(DS3231Error)` on error
     pub async fn set_datetime(
         &mut self,
-        datetime: &DateTime<Utc>,
+        datetime: &NaiveDateTime,
     ) -> Result<(), DS3231Error<I2C::Error>> {
         let raw = DS3231DateTime::from_datetime(datetime, self.time_representation)
             .map_err(DS3231Error::DateTime)?;
@@ -218,7 +218,7 @@ mod tests {
     use super::*;
     use crate::{InterruptControl, Ocillator, SquareWaveFrequency};
     use alloc::vec;
-    use chrono::{Datelike, Timelike};
+    use chrono::{Datelike, NaiveDate, Timelike};
     use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTrans};
 
     const DEVICE_ADDRESS: u8 = 0x68;
@@ -304,15 +304,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_async_set_datetime() {
-        let dt = DateTime::from_timestamp(1710424200, 0).unwrap(); // 2024-03-14 15:30:00
+        let dt = NaiveDate::from_ymd_opt(2024, 3, 14)
+            .unwrap()
+            .and_hms_opt(15, 30, 0)
+            .unwrap();
 
         let mock = setup_mock(&[I2cTrans::write(
             DEVICE_ADDRESS,
             vec![
                 RegAddr::Seconds as u8,
                 0x00, // seconds
-                0x50, // minutes
-                0x13, // hours (24-hour mode)
+                0x30, // minutes (BCD for 30)
+                0x15, // hours (BCD for 15 in 24-hour mode)
                 0x04, // day (Thursday)
                 0x14, // date
                 0x03, // month

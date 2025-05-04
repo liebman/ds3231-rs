@@ -106,8 +106,7 @@ pub mod asynch;
 mod datetime;
 
 use bitfield::bitfield;
-use chrono::DateTime;
-use chrono::Utc;
+use chrono::NaiveDateTime;
 use datetime::DS3231DateTimeError;
 use embedded_hal::i2c::I2c;
 use paste::paste;
@@ -617,9 +616,9 @@ impl<I2C: I2c> DS3231<I2C> {
     /// Gets the current date and time from the device.
     ///
     /// # Returns
-    /// * `Ok(DateTime<Utc>)` - The current date and time in UTC
+    /// * `Ok(NaiveDateTime)` - The current date and time
     /// * `Err(DS3231Error)` on error
-    pub fn datetime(&mut self) -> Result<DateTime<Utc>, DS3231Error<I2C::Error>> {
+    pub fn datetime(&mut self) -> Result<NaiveDateTime, DS3231Error<I2C::Error>> {
         let raw = self.read_raw_datetime()?;
         raw.into_datetime().map_err(DS3231Error::DateTime)
     }
@@ -634,7 +633,7 @@ impl<I2C: I2c> DS3231<I2C> {
     /// * `Err(DS3231Error)` on error
     pub fn set_datetime(
         &mut self,
-        datetime: &DateTime<Utc>,
+        datetime: &NaiveDateTime,
     ) -> Result<(), DS3231Error<I2C::Error>> {
         let raw = DS3231DateTime::from_datetime(datetime, self.time_representation)
             .map_err(DS3231Error::DateTime)?;
