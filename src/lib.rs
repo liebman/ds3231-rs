@@ -9,15 +9,6 @@
 //! - Both blocking and async I²C operation support
 //! - Optional logging support via `log` or `defmt`
 //!
-//! ## Usage
-//!
-//! Add this to your `Cargo.toml`:
-//!
-//! ```toml
-//! [dependencies]
-//! ds3231 = "0.1"  # Replace with actual version
-//! ```
-//!
 //! ### Blocking Usage
 //!
 //! ```rust,ignore

@@ -8,14 +8,8 @@ A platform-agnostic Rust driver for the DS3231 Real-Time Clock, built on the `em
 The DS3231 is a low-cost, extremely accurate I²C real-time clock (RTC) with an integrated 
 temperature-compensated crystal oscillator (TCXO) and crystal.
 
-## Features
-
 - Both blocking and async I²C operation support
 - Full register access (time/date, alarms, control, status)
-- Temperature sensor reading
-- Aging offset configuration
-- Square wave output control
-- Flexible time representation (12/24 hour)
 - Optional logging support via `log` or `defmt`
 - No `unsafe` code
 - Comprehensive error handling
@@ -84,24 +78,6 @@ The crate can be compiled with the following features:
 - `async`: Enables async I²C support
 - `log`: Enables logging via the `log` crate
 - `defmt`: Enables logging via the `defmt` crate
-
-## Error Handling
-
-The driver uses a custom error type that handles:
-
-- I²C communication errors
-- DateTime validation errors
-
-All operations return a `Result` type for proper error handling.
-
-## Safety
-
-This driver ensures safety through:
-
-- Strong typing for all register operations
-- Validation of all datetime values
-- Proper error propagation
-- No unsafe code
 
 ## License
 
