@@ -5,7 +5,7 @@ alwaysApply: true
 ---
 # Register Modeling
 
-The DS3231 driver uses a sophisticated register modeling system based on bitfields.
+The DS3231 driver models registers using the bitfield crate and enums
 
 ## Register Implementation
 In [src/lib.rs](mdc:src/lib.rs), registers are implemented using:

@@ -8,21 +8,22 @@ alwaysApply: true
 This is a Rust driver for the DS3231 Real-Time Clock (RTC) using the embedded-hal ecosystem. The driver supports both blocking and async I2C operations.
 
 ## Key Files
+
 - [src/lib.rs](mdc:src/lib.rs) - Main driver implementation
 - [src/datetime.rs](mdc:src/datetime.rs) - DateTime conversion utilities
 
 ## Features
+
 The driver supports several feature flags:
 - `async` - Enables async I2C operations
 - `log` - Enables standard logging
 - `defmt` - Enables defmt logging for embedded systems
 
 ## Architecture
+
 The driver uses a dual blocking/async implementation pattern with:
 - Register-level abstractions using bitfields
 - Error handling with generic I2C errors
 - Configuration through strongly-typed enums
 - Separate datetime handling logic
 
-## Usage Examples
-See the implementation in [src/lib.rs](mdc:src/lib.rs) for usage examples of both blocking and async modes.

@@ -1,7 +1,7 @@
 //! # DS3231 Real-Time Clock (RTC) Driver
-//! 
+//!
 //! A platform-agnostic Rust driver for the DS3231 Real-Time Clock, built on the `embedded-hal` ecosystem.
-//! The DS3231 is a low-cost, extremely accurate I²C real-time clock (RTC) with an integrated 
+//! The DS3231 is a low-cost, extremely accurate I²C real-time clock (RTC) with an integrated
 //! temperature-compensated crystal oscillator (TCXO) and crystal.
 //!
 //! ## Features
@@ -22,7 +22,7 @@
 //!
 //! ```rust,ignore
 //! use ds3231::{DS3231, Config, TimeRepresentation, SquareWaveFrequency, InterruptControl, Ocillator};
-//! 
+//!
 //! // Create configuration
 //! let config = Config {
 //!     time_representation: TimeRepresentation::TwentyFourHour,
@@ -34,7 +34,7 @@
 //!
 //! // Initialize device with I2C
 //! let mut rtc = DS3231::new(i2c, 0x68);
-//! 
+//!
 //! // Configure the device
 //! rtc.configure(&config)?;
 //!
@@ -55,7 +55,7 @@
 //!
 //! ```rust,ignore
 //! use ds3231::asynch::DS3231;
-//! 
+//!
 //! // Initialize device
 //! let mut rtc = DS3231::new(i2c, 0x68);
 //!
@@ -101,9 +101,9 @@
 // MUST be the first module
 mod fmt;
 
-mod datetime;
 #[cfg(feature = "async")]
 pub mod asynch;
+mod datetime;
 
 use bitfield::bitfield;
 use chrono::DateTime;
@@ -115,7 +115,7 @@ use paste::paste;
 use crate::datetime::DS3231DateTime;
 
 /// Configuration for the DS3231 RTC device.
-/// 
+///
 /// This struct contains all configurable parameters for the DS3231 device,
 /// including time representation format, square wave output settings,
 /// and oscillator control.
@@ -705,10 +705,10 @@ impl_register_access!(
 mod tests {
     extern crate alloc;
     use alloc::vec;
-    
+
     use super::*;
-    use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTrans};    
     use chrono::Timelike;
+    use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTrans};
 
     const DEVICE_ADDRESS: u8 = 0x68;
 
@@ -727,16 +727,14 @@ mod tests {
     #[test]
     fn test_read_control() {
         // Control register value: oscillator enabled, 1Hz square wave (bits 4,3 = 0b00)
-        let expected = 0b0000_0000;  // Hz1 frequency (0b00 in bits 4,3)
-        let mock = setup_mock(&[
-            I2cTrans::write_read(
-                DEVICE_ADDRESS,
-                vec![RegAddr::Control as u8],
-                vec![expected]
-            )
-        ]);
+        let expected = 0b0000_0000; // Hz1 frequency (0b00 in bits 4,3)
+        let mock = setup_mock(&[I2cTrans::write_read(
+            DEVICE_ADDRESS,
+            vec![RegAddr::Control as u8],
+            vec![expected],
+        )]);
         let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
-        
+
         let control = dev.control().unwrap();
         assert_eq!(control.oscillator_enable(), Ocillator::Enabled);
         assert_eq!(control.square_wave_frequency(), SquareWaveFrequency::Hz1);
@@ -749,40 +747,28 @@ mod tests {
         let mut control = Control::default();
         control.set_oscillator_enable(Ocillator::Enabled);
         control.set_square_wave_frequency(SquareWaveFrequency::Hz1024);
-        
-        let mock = setup_mock(&[
-            I2cTrans::write(
-                DEVICE_ADDRESS,
-                vec![RegAddr::Control as u8, control.0]
-            )
-        ]);
+
+        let mock = setup_mock(&[I2cTrans::write(
+            DEVICE_ADDRESS,
+            vec![RegAddr::Control as u8, control.0],
+        )]);
         let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
-        
+
         dev.set_control(control).unwrap();
         dev.i2c.done();
     }
 
     #[test]
     fn test_read_datetime() {
-        let datetime_registers = [
-            0x00,
-            0x30,
-            0x15,
-            0x04,
-            0x14,
-            0x03,
-            0x24
-        ];
-        
-        let mock = setup_mock(&[
-            I2cTrans::write_read(
-                DEVICE_ADDRESS,
-                vec![RegAddr::Seconds as u8],
-                datetime_registers.to_vec()
-            )
-        ]);
+        let datetime_registers = [0x00, 0x30, 0x15, 0x04, 0x14, 0x03, 0x24];
+
+        let mock = setup_mock(&[I2cTrans::write_read(
+            DEVICE_ADDRESS,
+            vec![RegAddr::Seconds as u8],
+            datetime_registers.to_vec(),
+        )]);
         let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
-        
+
         let dt = dev.datetime().unwrap();
         assert_eq!(dt.hour(), 15);
         assert_eq!(dt.minute(), 30);
@@ -793,23 +779,23 @@ mod tests {
     #[test]
     fn test_read_temperature() {
         // Temperature value: 25°C (0x19) with fraction 0x60 (0.375°C)
-        let expected_msb = 0x19;  // 25°C
-        let expected_lsb = 0x60;  // 0.375°C
-        
+        let expected_msb = 0x19; // 25°C
+        let expected_lsb = 0x60; // 0.375°C
+
         let mock = setup_mock(&[
             I2cTrans::write_read(
                 DEVICE_ADDRESS,
                 vec![RegAddr::MSBTemp as u8],
-                vec![expected_msb]
+                vec![expected_msb],
             ),
             I2cTrans::write_read(
                 DEVICE_ADDRESS,
                 vec![RegAddr::LSBTemp as u8],
-                vec![expected_lsb]
-            )
+                vec![expected_lsb],
+            ),
         ]);
         let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
-        
+
         let temp = dev.temperature().unwrap();
         let frac = dev.temperature_fraction().unwrap();
         assert_eq!(temp.temperature(), 25);

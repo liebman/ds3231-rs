@@ -1,8 +1,25 @@
+//! DateTime conversion and register utilities for the DS3231 RTC.
+//!
+//! This module provides the internal representation and conversion logic for the DS3231's date and time registers.
+//! It enables safe, validated conversion between the DS3231's BCD-encoded registers and chrono's `DateTime<Utc>`.
+//!
+//! # Features
+//!
+//! - Conversion to/from chrono `DateTime<Utc>`
+//! - Error handling for invalid or out-of-range values
+//!
+//! # Register Model
+//!
+//! The DS3231 stores date and time in 7 consecutive registers:
+//! - Seconds, Minutes, Hours, Day, Date, Month, Year
+//!
+//! # Error Handling
+//!
+//! Conversion errors are reported via [`DS3231DateTimeError`].
+
 use chrono::DateTime;
 use chrono::Datelike;
 use chrono::NaiveDate;
-use chrono::NaiveDateTime;
-use chrono::NaiveTime;
 use chrono::Timelike;
 use chrono::Utc;
 
@@ -15,6 +32,12 @@ use crate::Seconds;
 use crate::TimeRepresentation;
 use crate::Year;
 
+/// Internal representation of the DS3231 RTC date and time.
+///
+/// This struct models the 7 date/time registers of the DS3231, using strongly-typed bitfield wrappers for each field.
+/// It is used for register-level I/O and conversion to/from chrono's `DateTime<Utc>`.
+///
+/// Values are always validated and encoded/decoded as BCD.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct DS3231DateTime {
     seconds: Seconds,
@@ -147,19 +170,20 @@ impl DS3231DateTime {
             "raw_hour={:?} h={} m={} s={}",
             self.hours, hours, minutes, seconds
         );
-        let ndt = NaiveDateTime::new(
-            NaiveDate::from_ymd_opt(
-                2000 + (10 * u32::from(self.year.ten_year()) + u32::from(self.year.year())) as i32,
-                10 * u32::from(self.month.ten_month()) + u32::from(self.month.month()),
-                10 * u32::from(self.date.ten_date()) + u32::from(self.date.date()),
-            )
-            .expect("Invalid date"),
-            NaiveTime::from_hms_opt(hours, minutes, seconds).expect("Invalid time"),
-        );
-        let ts = ndt.and_utc().timestamp();
-        match DateTime::from_timestamp(ts, 0) {
-            Some(dt) => Ok(dt),
-            _ => Err(DS3231DateTimeError::InvalidDateTime),
+
+        let year =
+            2000 + (10 * u32::from(self.year.ten_year()) + u32::from(self.year.year())) as i32;
+        let month = 10 * u32::from(self.month.ten_month()) + u32::from(self.month.month());
+        let date = 10 * u32::from(self.date.ten_date()) + u32::from(self.date.date());
+
+        // Validate the date components before creating NaiveDateTime
+        if let Some(ndt) = NaiveDate::from_ymd_opt(year, month, date)
+            .and_then(|d| d.and_hms_opt(hours, minutes, seconds))
+        {
+            let ts = ndt.and_utc().timestamp();
+            DateTime::from_timestamp(ts, 0).ok_or(DS3231DateTimeError::InvalidDateTime)
+        } else {
+            Err(DS3231DateTimeError::InvalidDateTime)
         }
     }
 }
@@ -201,8 +225,76 @@ impl From<&DS3231DateTime> for [u8; 7] {
 }
 
 #[derive(Debug)]
+/// Errors that can occur during DS3231 date/time conversion or validation.
 pub enum DS3231DateTimeError {
+    /// The provided or decoded date/time is invalid (e.g., out of range, not representable)
     InvalidDateTime,
+    /// The year is not before 2200 (DS3231 only supports years < 2200)
     YearNotBefore2200,
+    /// The year is not after 1999 (DS3231 only supports years >= 2000)
     YearNotAfter1999,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn test_from_datetime_and_into_datetime_roundtrip() {
+        let dt = Utc.with_ymd_and_hms(2024, 3, 14, 15, 30, 0).unwrap();
+        let raw = DS3231DateTime::from_datetime(&dt, TimeRepresentation::TwentyFourHour).unwrap();
+        let dt2 = raw.into_datetime().unwrap();
+        assert_eq!(dt, dt2);
+    }
+
+    #[test]
+    fn test_from_datetime_century_flag() {
+        let dt = Utc.with_ymd_and_hms(2099, 12, 31, 23, 59, 59).unwrap();
+        let raw = DS3231DateTime::from_datetime(&dt, TimeRepresentation::TwentyFourHour).unwrap();
+        // The month register should have the century bit set for years >= 2100
+        assert_eq!(raw.month.century(), false);
+        let dt2 = Utc.with_ymd_and_hms(2100, 1, 1, 0, 0, 0).unwrap();
+        let raw2 = DS3231DateTime::from_datetime(&dt2, TimeRepresentation::TwentyFourHour).unwrap();
+        assert_eq!(raw2.month.century(), true);
+    }
+
+    #[test]
+    fn test_from_datetime_year_too_early() {
+        let dt = Utc.with_ymd_and_hms(1999, 12, 31, 23, 59, 59).unwrap();
+        let err =
+            DS3231DateTime::from_datetime(&dt, TimeRepresentation::TwentyFourHour).unwrap_err();
+        assert!(matches!(err, DS3231DateTimeError::YearNotAfter1999));
+    }
+
+    #[test]
+    fn test_from_datetime_year_too_late() {
+        let dt = Utc.with_ymd_and_hms(2200, 1, 1, 0, 0, 0).unwrap();
+        let err =
+            DS3231DateTime::from_datetime(&dt, TimeRepresentation::TwentyFourHour).unwrap_err();
+        assert!(matches!(err, DS3231DateTimeError::YearNotBefore2200));
+    }
+
+    #[test]
+    fn test_from_and_into_bcd_array() {
+        let dt = Utc.with_ymd_and_hms(2024, 3, 14, 15, 30, 0).unwrap();
+        let raw = DS3231DateTime::from_datetime(&dt, TimeRepresentation::TwentyFourHour).unwrap();
+        let arr: [u8; 7] = (&raw).into();
+        let raw2 = DS3231DateTime::from(arr);
+        let dt2 = raw2.into_datetime().unwrap();
+        assert_eq!(dt, dt2);
+    }
+
+    #[test]
+    fn test_invalid_bcd_to_datetime() {
+        // Invalid BCD values for month (0x13 = 19 in decimal)
+        let arr = [0x00, 0x00, 0x00, 0x01, 0x01, 0x13, 0x24];
+        let raw = DS3231DateTime::from(arr);
+        let result = raw.into_datetime();
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            DS3231DateTimeError::InvalidDateTime
+        ));
+    }
 }
