@@ -17,19 +17,9 @@
 //!
 //! Conversion errors are reported via [`DS3231DateTimeError`].
 
-use chrono::NaiveDateTime;
-use chrono::Datelike;
-use chrono::NaiveDate;
-use chrono::Timelike;
+use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
 
-use crate::Date;
-use crate::Day;
-use crate::Hours;
-use crate::Minutes;
-use crate::Month;
-use crate::Seconds;
-use crate::TimeRepresentation;
-use crate::Year;
+use crate::{Date, Day, Hours, Minutes, Month, Seconds, TimeRepresentation, Year};
 
 /// Internal representation of the DS3231 RTC date and time.
 ///
