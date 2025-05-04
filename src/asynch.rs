@@ -60,6 +60,9 @@ impl<I2C: I2c> DS3231<I2C> {
     /// # Returns
     /// * `Ok(())` on success
     /// * `Err(DS3231Error)` on error
+    ///
+    /// # Errors
+    /// Returns `DS3231Error::I2c` if there is an I2C communication error.
     pub async fn configure(&mut self, config: &Config) -> Result<(), DS3231Error<I2C::Error>> {
         #[cfg(any(feature = "log", feature = "defmt"))]
         debug!("DS3231: reading control register");
@@ -103,9 +106,9 @@ impl<I2C: I2c> DS3231<I2C> {
     /// * `Err(DS3231Error)` on error
     async fn write_raw_datetime(
         &mut self,
-        datetime: &DS3231DateTime,
+        datetime: DS3231DateTime,
     ) -> Result<(), DS3231Error<I2C::Error>> {
-        let data: [u8; 7] = datetime.into();
+        let data: [u8; 7] = (&datetime).into();
         self.i2c
             .write(
                 self.address,
@@ -129,6 +132,10 @@ impl<I2C: I2c> DS3231<I2C> {
     /// # Returns
     /// * `Ok(NaiveDateTime)` - The current date and time
     /// * `Err(DS3231Error)` on error
+    ///
+    /// # Errors
+    /// * Returns `DS3231Error::I2c` if there is an I2C communication error
+    /// * Returns `DS3231Error::DateTime` if the device returns invalid date/time data
     pub async fn datetime(&mut self) -> Result<NaiveDateTime, DS3231Error<I2C::Error>> {
         let raw = self.read_raw_datetime().await?;
         raw.into_datetime().map_err(DS3231Error::DateTime)
@@ -142,13 +149,17 @@ impl<I2C: I2c> DS3231<I2C> {
     /// # Returns
     /// * `Ok(())` on success
     /// * `Err(DS3231Error)` on error
+    ///
+    /// # Errors
+    /// * Returns `DS3231Error::I2c` if there is an I2C communication error
+    /// * Returns `DS3231Error::DateTime` if the provided datetime is invalid for the device
     pub async fn set_datetime(
         &mut self,
         datetime: &NaiveDateTime,
     ) -> Result<(), DS3231Error<I2C::Error>> {
         let raw = DS3231DateTime::from_datetime(datetime, self.time_representation)
             .map_err(DS3231Error::DateTime)?;
-        self.write_raw_datetime(&raw).await?;
+        self.write_raw_datetime(raw).await?;
         Ok(())
     }
 }
@@ -163,6 +174,8 @@ macro_rules! impl_register_access {
                     #[doc = "\n\n# Returns"]
                     #[doc = concat!("* `Ok(", stringify!($typ), ")` - The register value on success")]
                     #[doc = "* `Err(DS3231Error)` on error"]
+                    #[doc = "\n\n# Errors"]
+                    #[doc = "Returns `DS3231Error::I2c` if there is an I2C communication error"]
                     pub async fn $name(&mut self) -> Result<$typ, DS3231Error<I2C::Error>> {
                         let mut data = [0];
                         self.i2c
@@ -177,6 +190,8 @@ macro_rules! impl_register_access {
                     #[doc = "\n\n# Returns"]
                     #[doc = "* `Ok(())` on success"]
                     #[doc = "* `Err(DS3231Error)` on error"]
+                    #[doc = "\n\n# Errors"]
+                    #[doc = "Returns `DS3231Error::I2c` if there is an I2C communication error"]
                     pub async fn [<set_ $name>](&mut self, value: $typ) -> Result<(), DS3231Error<I2C::Error>> {
                         self.i2c.write(
                             self.address,
