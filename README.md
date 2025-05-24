@@ -3,6 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/ds3231.svg)](https://crates.io/crates/ds3231)
 [![Documentation](https://docs.rs/ds3231/badge.svg)](https://docs.rs/ds3231)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](README.md)
+[![Coverage Status](https://coveralls.io/repos/github/liebman/ds3231-rs/badge.svg?branch=main)](https://coveralls.io/github/liebman/ds3231-rs?branch=main)
 
 A platform-agnostic Rust driver for the DS3231 Real-Time Clock, built on the `embedded-hal` ecosystem.
 The DS3231 is a low-cost, extremely accurate I²C real-time clock (RTC) with an integrated 

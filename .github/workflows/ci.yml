@@ -86,3 +86,40 @@ jobs:
       
       - name: Check formatting
         run: cargo fmt --all -- --check
+
+  # Coverage analysis
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+      
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      
+      - name: Generate coverage (blocking)
+        run: cargo llvm-cov --no-report test
+      
+      - name: Generate coverage (async)
+        run: cargo llvm-cov --no-report test --features async
+      
+      - name: Generate coverage report
+        run: cargo llvm-cov report --lcov --output-path lcov.info
+      
+      - name: Upload coverage to Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path-to-lcov: lcov.info
+          fail-on-error: true
+    

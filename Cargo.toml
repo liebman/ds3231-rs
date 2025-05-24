@@ -34,3 +34,16 @@ defmt = ["dep:defmt"]
 [lib]
 name = "ds3231"
 test = true  # Enable testing with std
+
+# Coverage configuration
+[package.metadata.coverage.run]
+include-ffi = false
+skip-clean = false
+
+[package.metadata.coverage.report]
+# Exclude generated files and test modules from coverage
+exclude = [
+    "*/target/*",
+    "*/tests/*",
+    "*/benches/*",
+]
