@@ -18,9 +18,8 @@ The DS3231 driver supports both blocking and async I2C operations through a feat
 ## Implementation Pattern
 
 In [src/lib.rs](mdc:src/lib.rs), the dual implementation is achieved through:
-- Conditional compilation with #[cfg(feature = "async")]
+- using `maybe-async-cfg` crate to support both sync and async
 - Shared types and structures
-- Parallel method implementations
 - Identical public interfaces
 
 ## Key Components
