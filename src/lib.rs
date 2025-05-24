@@ -633,17 +633,14 @@ where
     /// # Errors
     /// Returns `DS3231Error::I2c` if there is an I2C communication error.
     pub async fn configure(&mut self, config: &Config) -> Result<(), DS3231Error<E>> {
-        #[cfg(any(feature = "log", feature = "defmt"))]
         debug!("DS3231: reading control register");
         let mut control = self.control().await?;
         control.set_oscillator_enable(config.oscillator_enable);
         control.set_battery_backed_square_wave(config.battery_backed_square_wave);
         control.set_square_wave_frequency(config.square_wave_frequency);
         control.set_interrupt_control(config.interrupt_control);
-        #[cfg(any(feature = "log", feature = "defmt"))]
         debug!("DS3231: writing control: {:?}", control);
         self.set_control(control).await?;
-        #[cfg(any(feature = "log", feature = "defmt"))]
         debug!("DS3231: reading hours register");
         let mut hours = self.hour().await?;
         hours.set_time_representation(config.time_representation);
@@ -933,6 +930,251 @@ mod tests {
         assert_eq!(frac.temperature_fraction(), 0x60);
         dev.i2c.done();
     }
+
+    #[tokio::test]
+    async fn test_async_alarm_registers() {
+        let mock = setup_mock(&[
+            // Test alarm1 registers
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm1Seconds as u8], vec![0x30]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm1Minutes as u8], vec![0x45]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm1Hours as u8], vec![0x12]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm1DayDate as u8], vec![0x15]),
+            // Test alarm2 registers
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm2Minutes as u8], vec![0x30]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm2Hours as u8], vec![0x08]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm2DayDate as u8], vec![0x20]),
+            // Test setting alarm registers
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Seconds as u8, 0x00]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Minutes as u8, 0x15]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Hours as u8, 0x09]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1DayDate as u8, 0x10]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm2Minutes as u8, 0x45]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm2Hours as u8, 0x14]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm2DayDate as u8, 0x25]),
+        ])
+        .await;
+
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        // Test reading alarm registers
+        let alarm1_sec = dev.alarm1_second().await.unwrap();
+        assert_eq!(alarm1_sec.seconds(), 0);
+        assert_eq!(alarm1_sec.ten_seconds(), 3);
+
+        let alarm1_min = dev.alarm1_minute().await.unwrap();
+        assert_eq!(alarm1_min.minutes(), 5);
+        assert_eq!(alarm1_min.ten_minutes(), 4);
+
+        let _alarm1_hour = dev.alarm1_hour().await.unwrap();
+        let _alarm1_day_date = dev.alarm1_day_date().await.unwrap();
+
+        let _alarm2_min = dev.alarm2_minute().await.unwrap();
+        let _alarm2_hour = dev.alarm2_hour().await.unwrap();
+        let _alarm2_day_date = dev.alarm2_day_date().await.unwrap();
+
+        // Test setting alarm registers
+        dev.set_alarm1_second(Seconds(0x00)).await.unwrap();
+        dev.set_alarm1_minute(Minutes(0x15)).await.unwrap();
+        dev.set_alarm1_hour(Hours(0x09)).await.unwrap();
+        dev.set_alarm1_day_date(Date(0x10)).await.unwrap();
+        dev.set_alarm2_minute(Minutes(0x45)).await.unwrap();
+        dev.set_alarm2_hour(Hours(0x14)).await.unwrap();
+        dev.set_alarm2_day_date(Date(0x25)).await.unwrap();
+
+        dev.i2c.done();
+    }
+
+    #[tokio::test]
+    async fn test_async_status_register_flags() {
+        let mock = setup_mock(&[
+            // Test various status flag combinations
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::ControlStatus as u8], vec![0x00]), // All flags clear
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::ControlStatus as u8], vec![0x88]), // OSF and EN32kHz set
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::ControlStatus as u8], vec![0x07]), // BSY, A2F, A1F set
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::ControlStatus as u8], vec![0x8F]), // All flags set
+        ])
+        .await;
+
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        // Test all flags clear
+        let status = dev.status().await.unwrap();
+        assert!(!status.oscillator_stop_flag());
+        assert!(!status.enable_32khz_output());
+        assert!(!status.busy());
+        assert!(!status.alarm2_flag());
+        assert!(!status.alarm1_flag());
+
+        // Test OSF and EN32kHz set
+        let status = dev.status().await.unwrap();
+        assert!(status.oscillator_stop_flag());
+        assert!(status.enable_32khz_output());
+        assert!(!status.busy());
+        assert!(!status.alarm2_flag());
+        assert!(!status.alarm1_flag());
+
+        // Test BSY, A2F, A1F set
+        let status = dev.status().await.unwrap();
+        assert!(!status.oscillator_stop_flag());
+        assert!(!status.enable_32khz_output());
+        assert!(status.busy());
+        assert!(status.alarm2_flag());
+        assert!(status.alarm1_flag());
+
+        // Test all flags set
+        let status = dev.status().await.unwrap();
+        assert!(status.oscillator_stop_flag());
+        assert!(status.enable_32khz_output());
+        assert!(status.busy());
+        assert!(status.alarm2_flag());
+        assert!(status.alarm1_flag());
+
+        dev.i2c.done();
+    }
+
+    #[tokio::test]
+    async fn test_async_individual_registers() {
+        let mock = setup_mock(&[
+            // Test all register reads
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Day as u8], vec![0x04]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Date as u8], vec![0x15]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Month as u8], vec![0x03]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Year as u8], vec![0x24]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::AgingOffset as u8], vec![0x05]),
+            // Test all register writes
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Day as u8, 0x02]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Date as u8, 0x10]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Month as u8, 0x06]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Year as u8, 0x25]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::AgingOffset as u8, 0x0A]),
+        ])
+        .await;
+
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        // Test reading all individual registers
+        let day = dev.day().await.unwrap();
+        assert_eq!(day.day(), 4);
+
+        let date = dev.date().await.unwrap();
+        assert_eq!(date.date(), 5);
+        assert_eq!(date.ten_date(), 1);
+
+        let month = dev.month().await.unwrap();
+        assert_eq!(month.month(), 3);
+        assert_eq!(month.ten_month(), 0);
+        assert!(!month.century());
+
+        let year = dev.year().await.unwrap();
+        assert_eq!(year.year(), 4);
+        assert_eq!(year.ten_year(), 2);
+
+        let aging_offset = dev.aging_offset().await.unwrap();
+        assert_eq!(aging_offset.aging_offset(), 5);
+
+        // Test writing all individual registers
+        dev.set_day(Day(0x02)).await.unwrap();
+        dev.set_date(Date(0x10)).await.unwrap();
+        dev.set_month(Month(0x06)).await.unwrap();
+        dev.set_year(Year(0x25)).await.unwrap();
+        dev.set_aging_offset(AgingOffset(0x0A)).await.unwrap();
+
+        dev.i2c.done();
+    }
+
+    #[tokio::test]
+    async fn test_async_twelve_hour_mode() {
+        let config = Config {
+            time_representation: TimeRepresentation::TwelveHour,
+            square_wave_frequency: SquareWaveFrequency::Hz1,
+            interrupt_control: InterruptControl::SquareWave,
+            battery_backed_square_wave: false,
+            oscillator_enable: Ocillator::Enabled,
+        };
+
+        let mock = setup_mock(&[
+            // Read control register
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Control as u8], vec![0]),
+            // Write control register
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Control as u8, 0]),
+            // Read hours register
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Hours as u8], vec![0]),
+            // Write hours register with 12-hour mode bit set
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Hours as u8, 0x40]), // Bit 6 set for 12-hour mode
+        ])
+        .await;
+
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+        dev.configure(&config).await.unwrap();
+        assert_eq!(dev.time_representation, TimeRepresentation::TwelveHour);
+        dev.i2c.done();
+    }
+
+    #[test]
+    fn test_register_from_u8_conversions() {
+        // Test TimeRepresentation conversions
+        assert_eq!(TimeRepresentation::from(0), TimeRepresentation::TwentyFourHour);
+        assert_eq!(TimeRepresentation::from(1), TimeRepresentation::TwelveHour);
+        assert_eq!(u8::from(TimeRepresentation::TwentyFourHour), 0);
+        assert_eq!(u8::from(TimeRepresentation::TwelveHour), 1);
+
+        // Test Ocillator conversions
+        assert_eq!(Ocillator::from(0), Ocillator::Enabled);
+        assert_eq!(Ocillator::from(1), Ocillator::Disabled);
+        assert_eq!(u8::from(Ocillator::Enabled), 0);
+        assert_eq!(u8::from(Ocillator::Disabled), 1);
+
+        // Test InterruptControl conversions
+        assert_eq!(InterruptControl::from(0), InterruptControl::SquareWave);
+        assert_eq!(InterruptControl::from(1), InterruptControl::Interrupt);
+        assert_eq!(u8::from(InterruptControl::SquareWave), 0);
+        assert_eq!(u8::from(InterruptControl::Interrupt), 1);
+
+        // Test SquareWaveFrequency conversions
+        assert_eq!(SquareWaveFrequency::from(0b00), SquareWaveFrequency::Hz1);
+        assert_eq!(SquareWaveFrequency::from(0b01), SquareWaveFrequency::Hz1024);
+        assert_eq!(SquareWaveFrequency::from(0b10), SquareWaveFrequency::Hz4096);
+        assert_eq!(SquareWaveFrequency::from(0b11), SquareWaveFrequency::Hz8192);
+        assert_eq!(u8::from(SquareWaveFrequency::Hz1), 0b00);
+        assert_eq!(u8::from(SquareWaveFrequency::Hz1024), 0b01);
+        assert_eq!(u8::from(SquareWaveFrequency::Hz4096), 0b10);
+        assert_eq!(u8::from(SquareWaveFrequency::Hz8192), 0b11);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid value for TimeRepresentation: 2")]
+    fn test_invalid_time_representation_conversion() {
+        let _ = TimeRepresentation::from(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid value for Ocillator: 2")]
+    fn test_invalid_oscillator_conversion() {
+        let _ = Ocillator::from(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid value for InterruptControl: 2")]
+    fn test_invalid_interrupt_control_conversion() {
+        let _ = InterruptControl::from(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid value for SquareWaveFrequency: 4")]
+    fn test_invalid_square_wave_frequency_conversion() {
+        let _ = SquareWaveFrequency::from(4);
+    }
+
+    #[test]
+    fn test_error_conversions() {
+        // Test DS3231Error::from for I2C errors
+        #[derive(Debug, PartialEq)]
+        struct MockI2cError;
+        
+        let i2c_error = MockI2cError;
+        let ds3231_error = DS3231Error::from(i2c_error);
+        assert!(matches!(ds3231_error, DS3231Error::I2c(MockI2cError)));
+    }
 }
 
 #[cfg(not(feature = "async"))]
@@ -1138,5 +1380,71 @@ mod tests {
         assert_eq!(temp.temperature(), 25);
         assert_eq!(frac.temperature_fraction(), 0x60);
         dev.i2c.done();
+    }
+
+    #[test]
+    fn test_enum_conversions() {
+        // Test TimeRepresentation conversions
+        assert_eq!(TimeRepresentation::from(0), TimeRepresentation::TwentyFourHour);
+        assert_eq!(TimeRepresentation::from(1), TimeRepresentation::TwelveHour);
+        assert_eq!(u8::from(TimeRepresentation::TwentyFourHour), 0);
+        assert_eq!(u8::from(TimeRepresentation::TwelveHour), 1);
+
+        // Test Ocillator conversions
+        assert_eq!(Ocillator::from(0), Ocillator::Enabled);
+        assert_eq!(Ocillator::from(1), Ocillator::Disabled);
+        assert_eq!(u8::from(Ocillator::Enabled), 0);
+        assert_eq!(u8::from(Ocillator::Disabled), 1);
+
+        // Test InterruptControl conversions
+        assert_eq!(InterruptControl::from(0), InterruptControl::SquareWave);
+        assert_eq!(InterruptControl::from(1), InterruptControl::Interrupt);
+        assert_eq!(u8::from(InterruptControl::SquareWave), 0);
+        assert_eq!(u8::from(InterruptControl::Interrupt), 1);
+
+        // Test SquareWaveFrequency conversions
+        assert_eq!(SquareWaveFrequency::from(0b00), SquareWaveFrequency::Hz1);
+        assert_eq!(SquareWaveFrequency::from(0b01), SquareWaveFrequency::Hz1024);
+        assert_eq!(SquareWaveFrequency::from(0b10), SquareWaveFrequency::Hz4096);
+        assert_eq!(SquareWaveFrequency::from(0b11), SquareWaveFrequency::Hz8192);
+        assert_eq!(u8::from(SquareWaveFrequency::Hz1), 0b00);
+        assert_eq!(u8::from(SquareWaveFrequency::Hz1024), 0b01);
+        assert_eq!(u8::from(SquareWaveFrequency::Hz4096), 0b10);
+        assert_eq!(u8::from(SquareWaveFrequency::Hz8192), 0b11);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid value for TimeRepresentation: 2")]
+    fn test_invalid_time_representation_conversion() {
+        let _ = TimeRepresentation::from(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid value for Ocillator: 2")]
+    fn test_invalid_oscillator_conversion() {
+        let _ = Ocillator::from(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid value for InterruptControl: 2")]
+    fn test_invalid_interrupt_control_conversion() {
+        let _ = InterruptControl::from(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid value for SquareWaveFrequency: 4")]
+    fn test_invalid_square_wave_frequency_conversion() {
+        let _ = SquareWaveFrequency::from(4);
+    }
+
+    #[test]
+    fn test_error_conversions() {
+        // Test DS3231Error::from for I2C errors
+        #[derive(Debug, PartialEq)]
+        struct MockI2cError;
+        
+        let i2c_error = MockI2cError;
+        let ds3231_error = DS3231Error::from(i2c_error);
+        assert!(matches!(ds3231_error, DS3231Error::I2c(MockI2cError)));
     }
 }

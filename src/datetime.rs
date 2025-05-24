@@ -134,12 +134,10 @@ impl DS3231DateTime {
 
     fn convert_year(year: i32) -> Result<(Year, bool), DS3231DateTimeError> {
         if year > 2199 {
-            #[cfg(any(feature = "log", feature = "defmt"))]
             error!("Year {} is too late! must be before 2200", year);
             return Err(DS3231DateTimeError::YearNotBefore2200);
         }
         if year < 2000 {
-            #[cfg(any(feature = "log", feature = "defmt"))]
             error!("Year {} is too early! must be greater than 1999", year);
             return Err(DS3231DateTimeError::YearNotAfter1999);
         }
@@ -188,7 +186,6 @@ impl DS3231DateTime {
             year,
         };
 
-        #[cfg(any(feature = "log", feature = "defmt"))]
         debug!("raw={:?}", raw);
 
         Ok(raw)
@@ -208,7 +205,6 @@ impl DS3231DateTime {
                 hours + 12 * u32::from(self.hours.pm_or_twenty_hours())
             }
         };
-        #[cfg(any(feature = "log", feature = "defmt"))]
         debug!(
             "raw_hour={:?} h={} m={} s={}",
             self.hours, hours, minutes, seconds
@@ -310,7 +306,7 @@ mod tests {
             .unwrap();
         let raw = DS3231DateTime::from_datetime(&dt, TimeRepresentation::TwentyFourHour).unwrap();
         let dt2 = raw.into_datetime().unwrap();
-        assert_eq!(dt, dt2);
+        core::assert_eq!(dt, dt2);
     }
 
     #[test]
@@ -362,7 +358,7 @@ mod tests {
         let arr: [u8; 7] = (&raw).into();
         let raw2 = DS3231DateTime::from(arr);
         let dt2 = raw2.into_datetime().unwrap();
-        assert_eq!(dt, dt2);
+        core::assert_eq!(dt, dt2);
     }
 
     #[test]
