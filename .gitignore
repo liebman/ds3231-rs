@@ -1,2 +1,9 @@
 /target
 /Cargo.lock
+
+# Coverage reports
+/coverage/
+*.profraw
+*.profdata
+lcov.info
+default.profraw
