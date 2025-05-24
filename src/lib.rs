@@ -935,14 +935,34 @@ mod tests {
     async fn test_async_alarm_registers() {
         let mock = setup_mock(&[
             // Test alarm1 registers
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm1Seconds as u8], vec![0x30]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm1Minutes as u8], vec![0x45]),
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm1Seconds as u8],
+                vec![0x30],
+            ),
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm1Minutes as u8],
+                vec![0x45],
+            ),
             I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm1Hours as u8], vec![0x12]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm1DayDate as u8], vec![0x15]),
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm1DayDate as u8],
+                vec![0x15],
+            ),
             // Test alarm2 registers
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm2Minutes as u8], vec![0x30]),
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm2Minutes as u8],
+                vec![0x30],
+            ),
             I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm2Hours as u8], vec![0x08]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm2DayDate as u8], vec![0x20]),
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm2DayDate as u8],
+                vec![0x20],
+            ),
             // Test setting alarm registers
             I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Seconds as u8, 0x00]),
             I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Minutes as u8, 0x15]),
@@ -988,10 +1008,26 @@ mod tests {
     async fn test_async_status_register_flags() {
         let mock = setup_mock(&[
             // Test various status flag combinations
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::ControlStatus as u8], vec![0x00]), // All flags clear
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::ControlStatus as u8], vec![0x88]), // OSF and EN32kHz set
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::ControlStatus as u8], vec![0x07]), // BSY, A2F, A1F set
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::ControlStatus as u8], vec![0x8F]), // All flags set
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::ControlStatus as u8],
+                vec![0x00],
+            ), // All flags clear
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::ControlStatus as u8],
+                vec![0x88],
+            ), // OSF and EN32kHz set
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::ControlStatus as u8],
+                vec![0x07],
+            ), // BSY, A2F, A1F set
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::ControlStatus as u8],
+                vec![0x8F],
+            ), // All flags set
         ])
         .await;
 
@@ -1113,7 +1149,10 @@ mod tests {
     #[test]
     fn test_register_from_u8_conversions() {
         // Test TimeRepresentation conversions
-        assert_eq!(TimeRepresentation::from(0), TimeRepresentation::TwentyFourHour);
+        assert_eq!(
+            TimeRepresentation::from(0),
+            TimeRepresentation::TwentyFourHour
+        );
         assert_eq!(TimeRepresentation::from(1), TimeRepresentation::TwelveHour);
         assert_eq!(u8::from(TimeRepresentation::TwentyFourHour), 0);
         assert_eq!(u8::from(TimeRepresentation::TwelveHour), 1);
@@ -1170,7 +1209,7 @@ mod tests {
         // Test DS3231Error::from for I2C errors
         #[derive(Debug, PartialEq)]
         struct MockI2cError;
-        
+
         let i2c_error = MockI2cError;
         let ds3231_error = DS3231Error::from(i2c_error);
         assert!(matches!(ds3231_error, DS3231Error::I2c(MockI2cError)));
@@ -1385,7 +1424,10 @@ mod tests {
     #[test]
     fn test_enum_conversions() {
         // Test TimeRepresentation conversions
-        assert_eq!(TimeRepresentation::from(0), TimeRepresentation::TwentyFourHour);
+        assert_eq!(
+            TimeRepresentation::from(0),
+            TimeRepresentation::TwentyFourHour
+        );
         assert_eq!(TimeRepresentation::from(1), TimeRepresentation::TwelveHour);
         assert_eq!(u8::from(TimeRepresentation::TwentyFourHour), 0);
         assert_eq!(u8::from(TimeRepresentation::TwelveHour), 1);
@@ -1442,7 +1484,7 @@ mod tests {
         // Test DS3231Error::from for I2C errors
         #[derive(Debug, PartialEq)]
         struct MockI2cError;
-        
+
         let i2c_error = MockI2cError;
         let ds3231_error = DS3231Error::from(i2c_error);
         assert!(matches!(ds3231_error, DS3231Error::I2c(MockI2cError)));
