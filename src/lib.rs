@@ -529,70 +529,70 @@ pub struct DS3231<I2C> {
 // Register access implementations
 macro_rules! impl_register_access {
     ($(($name:ident, $regaddr:expr, $typ:ty)),+) => {
-            $(
-                paste! {
-                    #[doc = concat!("Gets the value of the ", stringify!($name), " register.")]
-                    #[doc = "\n\n# Returns"]
-                    #[doc = concat!("* `Ok(", stringify!($typ), ")` - The register value on success")]
-                    #[doc = "* `Err(DS3231Error)` on error"]
-                    #[doc = "\n\n# Errors"]
-                    #[doc = "Returns `DS3231Error::I2c` if there is an I2C communication error"]
-                    #[cfg(feature = "async")]
-                    pub async fn $name(&mut self) -> Result<$typ, DS3231Error<E>> {
-                        let mut data = [0];
-                        self.i2c
-                            .write_read(self.address, &[$regaddr as u8], &mut data)
-                            .await?;
-                        Ok($typ(data[0]))
-                    }
-                    #[doc = concat!("Gets the value of the ", stringify!($name), " register.")]
-                    #[doc = "\n\n# Returns"]
-                    #[doc = concat!("* `Ok(", stringify!($typ), ")` - The register value on success")]
-                    #[doc = "* `Err(DS3231Error)` on error"]
-                    #[doc = "\n\n# Errors"]
-                    #[doc = "Returns `DS3231Error::I2c` if there is an I2C communication error"]
-                    #[cfg(not(feature = "async"))]
-                    pub fn $name(&mut self) -> Result<$typ, DS3231Error<E>> {
-                        let mut data = [0];
-                        self.i2c
-                            .write_read(self.address, &[$regaddr as u8], &mut data)?;
-                        Ok($typ(data[0]))
-                    }
-
-                    #[doc = concat!("Sets the value of the ", stringify!($name), " register.")]
-                    #[doc = "\n\n# Arguments"]
-                    #[doc = concat!("* `value` - The value to write to the ", stringify!($name), " register")]
-                    #[doc = "\n\n# Returns"]
-                    #[doc = "* `Ok(())` on success"]
-                    #[doc = "* `Err(DS3231Error)` on error"]
-                    #[doc = "\n\n# Errors"]
-                    #[doc = "Returns `DS3231Error::I2c` if there is an I2C communication error"]
-                    #[cfg(feature = "async")]
-                    pub async fn [<set_ $name>](&mut self, value: $typ) -> Result<(), DS3231Error<E>> {
-                        self.i2c.write(
-                            self.address,
-                            &[$regaddr as u8, value.into()],
-                        ).await?;
-                        Ok(())
-                    }
-                    #[doc = concat!("Sets the value of the ", stringify!($name), " register.")]
-                    #[doc = "\n\n# Arguments"]
-                    #[doc = concat!("* `value` - The value to write to the ", stringify!($name), " register")]
-                    #[doc = "\n\n# Returns"]
-                    #[doc = "* `Ok(())` on success"]
-                    #[doc = "* `Err(DS3231Error)` on error"]
-                    #[doc = "\n\n# Errors"]
-                    #[doc = "Returns `DS3231Error::I2c` if there is an I2C communication error"]
-                    #[cfg(not(feature = "async"))]
-                    pub fn [<set_ $name>](&mut self, value: $typ) -> Result<(), DS3231Error<E>> {
-                        self.i2c.write(
-                            self.address,
-                            &[$regaddr as u8, value.into()],
-                        )?;
-                        Ok(())
-                    }
+        $(
+            paste! {
+                #[doc = concat!("Gets the value of the ", stringify!($name), " register.")]
+                #[doc = "\n\n# Returns"]
+                #[doc = concat!("* `Ok(", stringify!($typ), ")` - The register value on success")]
+                #[doc = "* `Err(DS3231Error)` on error"]
+                #[doc = "\n\n# Errors"]
+                #[doc = "Returns `DS3231Error::I2c` if there is an I2C communication error"]
+                #[cfg(feature = "async")]
+                pub async fn $name(&mut self) -> Result<$typ, DS3231Error<E>> {
+                    let mut data = [0];
+                    self.i2c
+                        .write_read(self.address, &[$regaddr as u8], &mut data)
+                        .await?;
+                    Ok($typ(data[0]))
                 }
-            )+
+                #[doc = concat!("Gets the value of the ", stringify!($name), " register.")]
+                #[doc = "\n\n# Returns"]
+                #[doc = concat!("* `Ok(", stringify!($typ), ")` - The register value on success")]
+                #[doc = "* `Err(DS3231Error)` on error"]
+                #[doc = "\n\n# Errors"]
+                #[doc = "Returns `DS3231Error::I2c` if there is an I2C communication error"]
+                #[cfg(not(feature = "async"))]
+                pub fn $name(&mut self) -> Result<$typ, DS3231Error<E>> {
+                    let mut data = [0];
+                    self.i2c
+                        .write_read(self.address, &[$regaddr as u8], &mut data)?;
+                    Ok($typ(data[0]))
+                }
+
+                #[doc = concat!("Sets the value of the ", stringify!($name), " register.")]
+                #[doc = "\n\n# Arguments"]
+                #[doc = concat!("* `value` - The value to write to the ", stringify!($name), " register")]
+                #[doc = "\n\n# Returns"]
+                #[doc = "* `Ok(())` on success"]
+                #[doc = "* `Err(DS3231Error)` on error"]
+                #[doc = "\n\n# Errors"]
+                #[doc = "Returns `DS3231Error::I2c` if there is an I2C communication error"]
+                #[cfg(feature = "async")]
+                pub async fn [<set_ $name>](&mut self, value: $typ) -> Result<(), DS3231Error<E>> {
+                    self.i2c.write(
+                        self.address,
+                        &[$regaddr as u8, value.into()],
+                    ).await?;
+                    Ok(())
+                }
+                #[doc = concat!("Sets the value of the ", stringify!($name), " register.")]
+                #[doc = "\n\n# Arguments"]
+                #[doc = concat!("* `value` - The value to write to the ", stringify!($name), " register")]
+                #[doc = "\n\n# Returns"]
+                #[doc = "* `Ok(())` on success"]
+                #[doc = "* `Err(DS3231Error)` on error"]
+                #[doc = "\n\n# Errors"]
+                #[doc = "Returns `DS3231Error::I2c` if there is an I2C communication error"]
+                #[cfg(not(feature = "async"))]
+                pub fn [<set_ $name>](&mut self, value: $typ) -> Result<(), DS3231Error<E>> {
+                    self.i2c.write(
+                        self.address,
+                        &[$regaddr as u8, value.into()],
+                    )?;
+                    Ok(())
+                }
+            }
+        )+
     }
 }
 
