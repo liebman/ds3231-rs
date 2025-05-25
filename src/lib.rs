@@ -517,6 +517,70 @@ bitfield! {
 }
 from_register_u8!(TemperatureFraction);
 
+// Alarm register types with mask bits and special control bits
+
+bitfield! {
+    /// Alarm Seconds register with mask bit (only used by Alarm 1).
+    #[derive(Clone, Copy, Default, PartialEq)]
+    pub struct AlarmSeconds(u8);
+    impl Debug;
+    /// Alarm mask bit 1 (A1M1)
+    pub alarm_mask1, set_alarm_mask1: 7;
+    /// Tens place of seconds (0-5)
+    pub ten_seconds, set_ten_seconds: 6, 4;
+    /// Ones place of seconds (0-9)
+    pub seconds, set_seconds: 3, 0;
+}
+from_register_u8!(AlarmSeconds);
+
+bitfield! {
+    /// Alarm Minutes register with mask bit (used by both Alarm 1 and Alarm 2).
+    #[derive(Clone, Copy, Default, PartialEq)]
+    pub struct AlarmMinutes(u8);
+    impl Debug;
+    /// Alarm mask bit 2 (A1M2/A2M2)
+    pub alarm_mask2, set_alarm_mask2: 7;
+    /// Tens place of minutes (0-5)
+    pub ten_minutes, set_ten_minutes: 6, 4;
+    /// Ones place of minutes (0-9)
+    pub minutes, set_minutes: 3, 0;
+}
+from_register_u8!(AlarmMinutes);
+
+bitfield! {
+    /// Alarm Hours register with mask bit and time format control (used by both Alarm 1 and Alarm 2).
+    #[derive(Clone, Copy, Default, PartialEq)]
+    pub struct AlarmHours(u8);
+    impl Debug;
+    /// Alarm mask bit 3 (A1M3/A2M3)
+    pub alarm_mask3, set_alarm_mask3: 7;
+    /// Time representation format (12/24 hour)
+    pub from into TimeRepresentation, time_representation, set_time_representation: 6, 6;
+    /// PM flag (12-hour) or 20-hour bit (24-hour)
+    pub pm_or_twenty_hours, set_pm_or_twenty_hours: 5, 5;
+    /// Tens place of hours
+    pub ten_hours, set_ten_hours: 4, 4;
+    /// Ones place of hours
+    pub hours, set_hours: 3, 0;
+}
+from_register_u8!(AlarmHours);
+
+bitfield! {
+    /// Alarm Day/Date register with mask bit and DY/DT control (used by both Alarm 1 and Alarm 2).
+    #[derive(Clone, Copy, Default, PartialEq)]
+    pub struct AlarmDayDate(u8);
+    impl Debug;
+    /// Alarm mask bit 4 (A1M4/A2M4)
+    pub alarm_mask4, set_alarm_mask4: 7;
+    /// Day/Date select (1=day of week, 0=date of month)
+    pub day_date_select, set_day_date_select: 6;
+    /// Tens place of date (0-3) when DY/DT=0, or unused when DY/DT=1
+    pub ten_date, set_ten_date: 5, 4;
+    /// Day of week (1-7) when DY/DT=1, or ones place of date (0-9) when DY/DT=0
+    pub day_or_date, set_day_or_date: 3, 0;
+}
+from_register_u8!(AlarmDayDate);
+
 /// DS3231 Real-Time Clock driver.
 ///
 /// This struct provides the blocking interface to the DS3231 RTC device.
@@ -731,13 +795,13 @@ where
         (date, RegAddr::Date, Date),
         (month, RegAddr::Month, Month),
         (year, RegAddr::Year, Year),
-        (alarm1_second, RegAddr::Alarm1Seconds, Seconds),
-        (alarm1_minute, RegAddr::Alarm1Minutes, Minutes),
-        (alarm1_hour, RegAddr::Alarm1Hours, Hours),
-        (alarm1_day_date, RegAddr::Alarm1DayDate, Date),
-        (alarm2_minute, RegAddr::Alarm2Minutes, Minutes),
-        (alarm2_hour, RegAddr::Alarm2Hours, Hours),
-        (alarm2_day_date, RegAddr::Alarm2DayDate, Date),
+        (alarm1_second, RegAddr::Alarm1Seconds, AlarmSeconds),
+        (alarm1_minute, RegAddr::Alarm1Minutes, AlarmMinutes),
+        (alarm1_hour, RegAddr::Alarm1Hours, AlarmHours),
+        (alarm1_day_date, RegAddr::Alarm1DayDate, AlarmDayDate),
+        (alarm2_minute, RegAddr::Alarm2Minutes, AlarmMinutes),
+        (alarm2_hour, RegAddr::Alarm2Hours, AlarmHours),
+        (alarm2_day_date, RegAddr::Alarm2DayDate, AlarmDayDate),
         (control, RegAddr::Control, Control),
         (status, RegAddr::ControlStatus, Status),
         (aging_offset, RegAddr::AgingOffset, AgingOffset),
@@ -1049,13 +1113,13 @@ mod tests {
         let _alarm2_day_date = dev.alarm2_day_date().await.unwrap();
 
         // Test setting alarm registers
-        dev.set_alarm1_second(Seconds(0x00)).await.unwrap();
-        dev.set_alarm1_minute(Minutes(0x15)).await.unwrap();
-        dev.set_alarm1_hour(Hours(0x09)).await.unwrap();
-        dev.set_alarm1_day_date(Date(0x10)).await.unwrap();
-        dev.set_alarm2_minute(Minutes(0x45)).await.unwrap();
-        dev.set_alarm2_hour(Hours(0x14)).await.unwrap();
-        dev.set_alarm2_day_date(Date(0x25)).await.unwrap();
+        dev.set_alarm1_second(AlarmSeconds(0x00)).await.unwrap();
+        dev.set_alarm1_minute(AlarmMinutes(0x15)).await.unwrap();
+        dev.set_alarm1_hour(AlarmHours(0x09)).await.unwrap();
+        dev.set_alarm1_day_date(AlarmDayDate(0x10)).await.unwrap();
+        dev.set_alarm2_minute(AlarmMinutes(0x45)).await.unwrap();
+        dev.set_alarm2_hour(AlarmHours(0x14)).await.unwrap();
+        dev.set_alarm2_day_date(AlarmDayDate(0x25)).await.unwrap();
 
         dev.i2c.done();
     }
@@ -1281,5 +1345,102 @@ mod tests {
         let i2c_error = MockI2cError;
         let ds3231_error = DS3231Error::from(i2c_error);
         assert!(matches!(ds3231_error, DS3231Error::I2c(MockI2cError)));
+    }
+
+    #[maybe_async_cfg::maybe(
+        sync(cfg(not(feature = "async"))),
+        async(feature = "async", keep_self)
+    )]
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_alarm_mask_bits_and_dydt() {
+        let mock = setup_mock(&[
+            // Test reading alarm registers with mask bits set
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm1Seconds as u8],
+                vec![0x80], // A1M1 mask bit set
+            ),
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm1Minutes as u8],
+                vec![0x85], // A1M2 mask bit set + 5 minutes
+            ),
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm1Hours as u8],
+                vec![0x89], // A1M3 mask bit set + 9 hours
+            ),
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm1DayDate as u8],
+                vec![0xC3], // A1M4 + DY/DT set + day 3
+            ),
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm2DayDate as u8],
+                vec![0x15], // A2M4 clear + DY/DT clear + date 15
+            ),
+            // Test writing alarm registers with mask bits
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Seconds as u8, 0x80]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Minutes as u8, 0x85]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Hours as u8, 0x89]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1DayDate as u8, 0xC3]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm2DayDate as u8, 0x15]),
+        ]);
+
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        // Test reading alarm registers with mask bits
+        let alarm1_sec = dev.alarm1_second().await.unwrap();
+        assert!(alarm1_sec.alarm_mask1()); // Mask bit should be set
+        assert_eq!(alarm1_sec.seconds(), 0);
+        assert_eq!(alarm1_sec.ten_seconds(), 0);
+
+        let alarm1_min = dev.alarm1_minute().await.unwrap();
+        assert!(alarm1_min.alarm_mask2()); // Mask bit should be set
+        assert_eq!(alarm1_min.minutes(), 5);
+        assert_eq!(alarm1_min.ten_minutes(), 0);
+
+        let alarm1_hour = dev.alarm1_hour().await.unwrap();
+        assert!(alarm1_hour.alarm_mask3()); // Mask bit should be set
+        assert_eq!(alarm1_hour.hours(), 9);
+        assert_eq!(alarm1_hour.ten_hours(), 0);
+
+        let alarm1_day_date = dev.alarm1_day_date().await.unwrap();
+        assert!(alarm1_day_date.alarm_mask4()); // Mask bit should be set
+        assert!(alarm1_day_date.day_date_select()); // DY/DT should be set (day mode)
+        assert_eq!(alarm1_day_date.day_or_date(), 3); // Day 3
+
+        let alarm2_day_date = dev.alarm2_day_date().await.unwrap();
+        assert!(!alarm2_day_date.alarm_mask4()); // Mask bit should be clear
+        assert!(!alarm2_day_date.day_date_select()); // DY/DT should be clear (date mode)
+        assert_eq!(alarm2_day_date.day_or_date(), 5); // Date 5
+        assert_eq!(alarm2_day_date.ten_date(), 1); // Ten date 1
+
+        // Test writing alarm registers with mask bits
+        let mut alarm1_sec = AlarmSeconds(0x00);
+        alarm1_sec.set_alarm_mask1(true);
+        dev.set_alarm1_second(alarm1_sec).await.unwrap();
+
+        let mut alarm1_min = AlarmMinutes(0x05);
+        alarm1_min.set_alarm_mask2(true);
+        dev.set_alarm1_minute(alarm1_min).await.unwrap();
+
+        let mut alarm1_hour = AlarmHours(0x09);
+        alarm1_hour.set_alarm_mask3(true);
+        dev.set_alarm1_hour(alarm1_hour).await.unwrap();
+
+        let mut alarm1_day_date = AlarmDayDate(0x03);
+        alarm1_day_date.set_alarm_mask4(true);
+        alarm1_day_date.set_day_date_select(true); // Set to day mode
+        dev.set_alarm1_day_date(alarm1_day_date).await.unwrap();
+
+        let mut alarm2_day_date = AlarmDayDate(0x15);
+        alarm2_day_date.set_alarm_mask4(false);
+        alarm2_day_date.set_day_date_select(false); // Set to date mode
+        dev.set_alarm2_day_date(alarm2_day_date).await.unwrap();
+
+        dev.i2c.done();
     }
 }
