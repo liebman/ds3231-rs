@@ -109,9 +109,12 @@ jobs:
       
       - name: Generate coverage (blocking)
         run: cargo llvm-cov --no-report test
-      
+      - name: Generate coverage (blocking,log)
+        run: cargo llvm-cov --no-report test --features log
       - name: Generate coverage (async)
-        run: cargo llvm-cov --no-report test --features async
+        run: cargo llvm-cov --no-report test --features "async"
+      - name: Generate coverage (async,log)
+        run: cargo llvm-cov --no-report test --features "async,log"
       
       - name: Generate coverage report
         run: cargo llvm-cov report --lcov --output-path lcov.info

@@ -663,6 +663,18 @@ impl DS3231Alarm1 {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for DS3231Alarm1 {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "DS3231Alarm1 {{ ");
+        defmt::write!(f, "seconds: {}, ", self.seconds);
+        defmt::write!(f, "minutes: {}, ", self.minutes);
+        defmt::write!(f, "hours: {}, ", self.hours);
+        defmt::write!(f, "day_date: {} ", self.day_date);
+        defmt::write!(f, "}}");
+    }
+}
+
 /// Internal representation of DS3231 Alarm 2 registers.
 ///
 /// This struct models the 3 alarm 2 registers of the DS3231 (no seconds register).
@@ -794,6 +806,17 @@ impl DS3231Alarm2 {
             hours,
             day_date,
         }
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for DS3231Alarm2 {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "DS3231Alarm2 {{ ");
+        defmt::write!(f, "minutes: {}, ", self.minutes);
+        defmt::write!(f, "hours: {}, ", self.hours);
+        defmt::write!(f, "day_date: {} ", self.day_date);
+        defmt::write!(f, "}}");
     }
 }
 

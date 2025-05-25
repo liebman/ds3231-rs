@@ -603,6 +603,18 @@ bitfield! {
 }
 from_register_u8!(AlarmSeconds);
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for AlarmSeconds {
+    fn format(&self, f: defmt::Formatter) {
+        let seconds = 10 * self.ten_seconds() + self.seconds();
+        defmt::write!(f, "AlarmSeconds({}s", seconds);
+        if self.alarm_mask1() {
+            defmt::write!(f, ", masked");
+        }
+        defmt::write!(f, ")");
+    }
+}
+
 bitfield! {
     /// Alarm Minutes register with mask bit (used by both Alarm 1 and Alarm 2).
     #[derive(Clone, Copy, Default, PartialEq)]
@@ -616,6 +628,18 @@ bitfield! {
     pub minutes, set_minutes: 3, 0;
 }
 from_register_u8!(AlarmMinutes);
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for AlarmMinutes {
+    fn format(&self, f: defmt::Formatter) {
+        let minutes = 10 * self.ten_minutes() + self.minutes();
+        defmt::write!(f, "AlarmMinutes({}m", minutes);
+        if self.alarm_mask2() {
+            defmt::write!(f, ", masked");
+        }
+        defmt::write!(f, ")");
+    }
+}
 
 bitfield! {
     /// Alarm Hours register with mask bit and time format control (used by both Alarm 1 and Alarm 2).
@@ -635,6 +659,32 @@ bitfield! {
 }
 from_register_u8!(AlarmHours);
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for AlarmHours {
+    fn format(&self, f: defmt::Formatter) {
+        let hours = 10 * self.ten_hours() + self.hours();
+        match self.time_representation() {
+            TimeRepresentation::TwentyFourHour => {
+                let hours = hours + 20 * self.pm_or_twenty_hours();
+                defmt::write!(f, "AlarmHours({}h", hours);
+            }
+            TimeRepresentation::TwelveHour => {
+                let is_pm = self.pm_or_twenty_hours() != 0;
+                defmt::write!(
+                    f,
+                    "AlarmHours({}h {}",
+                    hours,
+                    if is_pm { "PM" } else { "AM" }
+                );
+            }
+        }
+        if self.alarm_mask3() {
+            defmt::write!(f, ", masked");
+        }
+        defmt::write!(f, ")");
+    }
+}
+
 bitfield! {
     /// Alarm Day/Date register with mask bit and DY/DT control (used by both Alarm 1 and Alarm 2).
     #[derive(Clone, Copy, Default, PartialEq)]
@@ -650,6 +700,25 @@ bitfield! {
     pub day_or_date, set_day_or_date: 3, 0;
 }
 from_register_u8!(AlarmDayDate);
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for AlarmDayDate {
+    fn format(&self, f: defmt::Formatter) {
+        match self.day_date_select() {
+            DayDateSelect::Day => {
+                defmt::write!(f, "AlarmDayDate(day {})", self.day_or_date());
+            }
+            DayDateSelect::Date => {
+                let date = 10 * self.ten_date() + self.day_or_date();
+                defmt::write!(f, "AlarmDayDate(date {})", date);
+            }
+        }
+        if self.alarm_mask4() {
+            defmt::write!(f, ", masked");
+        }
+        defmt::write!(f, ")");
+    }
+}
 
 /// DS3231 Real-Time Clock driver.
 ///

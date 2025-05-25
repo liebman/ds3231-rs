@@ -257,6 +257,30 @@ impl From<&DS3231DateTime> for [u8; 7] {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for DS3231DateTime {
+    fn format(&self, f: defmt::Formatter) {
+        // Convert to readable datetime format for display
+        match self.into_datetime() {
+            Ok(dt) => {
+                defmt::write!(
+                    f,
+                    "DS3231DateTime({}-{:02}-{:02} {:02}:{:02}:{:02})",
+                    dt.year(),
+                    dt.month(),
+                    dt.day(),
+                    dt.hour(),
+                    dt.minute(),
+                    dt.second()
+                );
+            }
+            Err(_) => {
+                defmt::write!(f, "DS3231DateTime(invalid)");
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 /// Errors that can occur during DS3231 date/time conversion or validation.
 pub enum DS3231DateTimeError {
