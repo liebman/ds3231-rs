@@ -1,0 +1,32 @@
+[package]
+edition = "2021"
+name    = "esp-alarm"
+version = "0.1.0"
+
+[dependencies]
+ds3231 = { path = "../../" }
+chrono = { version = "0.4", default-features = false, features = [] }
+critical-section = "1.2.0"
+esp-backtrace = { version = "0.15.1", features = [
+  "esp32c6",
+  "exception-handler",
+  "panic-handler",
+  "println",
+] }
+esp-hal = { version = "1.0.0-beta.0", features = ["esp32c6", "unstable"] }
+esp-println = { version = "0.13.0", features = ["esp32c6", "log"] }
+log = { version = "0.4.21" }
+
+[profile.dev]
+# Rust debug is too slow.
+# For debug builds always builds with some optimization
+opt-level = "s"
+
+[profile.release]
+codegen-units    = 1     # LLVM can perform better optimizations using a single thread
+debug            = 2
+debug-assertions = false
+incremental      = false
+lto              = 'fat'
+opt-level        = 's'
+overflow-checks  = false
