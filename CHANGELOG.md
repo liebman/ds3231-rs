@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Use maybe-async-cfg to support async vs the default sync operation
+- Improved alarm support (#4)
 
 ### Deprecated
 
