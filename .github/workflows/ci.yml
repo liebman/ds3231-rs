@@ -87,6 +87,31 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  # Examples build check
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: riscv32imac-unknown-none-elf
+          components: rustfmt
+      
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+      
+      - name: Check formatting of esp-alarm example
+        run: cd examples/esp-alarm && cargo fmt --all -- --check
+      
+      - name: Build esp-alarm example
+        run: cd examples/esp-alarm && cargo build
+      
+      - name: Run clippy on esp-alarm example
+        run: cd examples/esp-alarm && cargo clippy -- -D warnings
+
   # Coverage analysis
   coverage:
     name: Coverage
@@ -109,9 +134,12 @@ jobs:
       
       - name: Generate coverage (blocking)
         run: cargo llvm-cov --no-report test
-      
+      - name: Generate coverage (blocking,log)
+        run: cargo llvm-cov --no-report test --features log
       - name: Generate coverage (async)
-        run: cargo llvm-cov --no-report test --features async
+        run: cargo llvm-cov --no-report test --features "async"
+      - name: Generate coverage (async,log)
+        run: cargo llvm-cov --no-report test --features "async,log"
       
       - name: Generate coverage report
         run: cargo llvm-cov report --lcov --output-path lcov.info

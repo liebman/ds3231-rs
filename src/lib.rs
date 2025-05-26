@@ -12,7 +12,7 @@
 //! ### Blocking Usage
 //!
 //! ```rust,ignore
-//! use ds3231::{DS3231, Config, TimeRepresentation, SquareWaveFrequency, InterruptControl, Ocillator};
+//! use ds3231::{DS3231, Config, TimeRepresentation, SquareWaveFrequency, InterruptControl, Ocillator, Alarm1Config, Alarm2Config};
 //!
 //! // Create configuration
 //! let config = Config {
@@ -31,6 +31,24 @@
 //!
 //! // Get current date/time
 //! let datetime = rtc.datetime()?;
+//!
+//! // Set a daily alarm for 9:30 AM
+//! let alarm1 = Alarm1Config::AtTime {
+//!     hours: 9,
+//!     minutes: 30,
+//!     seconds: 0,
+//!     is_pm: None, // 24-hour mode
+//! };
+//! rtc.set_alarm1(&alarm1)?;
+//!
+//! // Set a weekly alarm for Friday at 5:00 PM
+//! let alarm2 = Alarm2Config::AtTimeOnDay {
+//!     hours: 5,
+//!     minutes: 0,
+//!     day: 6, // Friday
+//!     is_pm: Some(true), // 12-hour mode
+//! };
+//! rtc.set_alarm2(&alarm2)?;
 //! ```
 //!
 //! ### Async Usage
@@ -45,7 +63,7 @@
 //! Then use with async/await:
 //!
 //! ```rust,ignore
-//! use ds3231::asynch::DS3231;
+//! use ds3231::{DS3231, Alarm1Config, Alarm2Config};
 //!
 //! // Initialize device
 //! let mut rtc = DS3231::new(i2c, 0x68);
@@ -55,6 +73,18 @@
 //!
 //! // Get current date/time asynchronously
 //! let datetime = rtc.datetime().await?;
+//!
+//! // Set alarms asynchronously
+//! let alarm1 = Alarm1Config::AtTime {
+//!     hours: 9,
+//!     minutes: 30,
+//!     seconds: 0,
+//!     is_pm: None,
+//! };
+//! rtc.set_alarm1(&alarm1).await?;
+//!
+//! let alarm2 = Alarm2Config::EveryMinute;
+//! rtc.set_alarm2(&alarm2).await?;
 //! ```
 //!
 //! ## Features
@@ -94,9 +124,10 @@
 // MUST be the first module
 mod fmt;
 
+mod alarm;
 mod datetime;
+mod registers;
 
-use bitfield::bitfield;
 use chrono::NaiveDateTime;
 use datetime::DS3231DateTimeError;
 #[cfg(not(feature = "async"))]
@@ -106,6 +137,16 @@ use embedded_hal_async::i2c::I2c as AsyncI2c;
 use paste::paste;
 
 use crate::datetime::DS3231DateTime;
+use crate::registers::RegAddr;
+
+// Re-export public types from alarm module
+pub use crate::alarm::{Alarm1Config, Alarm2Config, AlarmError, DS3231Alarm1, DS3231Alarm2};
+// Re-export public types from registers module
+pub use crate::registers::{
+    AgingOffset, AlarmDayDate, AlarmHours, AlarmMinutes, AlarmSeconds, Control, Date, Day,
+    DayDateSelect, Hours, InterruptControl, Minutes, Month, Ocillator, Seconds,
+    SquareWaveFrequency, Status, Temperature, TemperatureFraction, TimeRepresentation, Year,
+};
 
 /// Configuration for the DS3231 RTC device.
 ///
@@ -127,173 +168,6 @@ pub struct Config {
     pub oscillator_enable: Ocillator,
 }
 
-/// Register addresses for the DS3231 RTC.
-#[allow(unused)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum RegAddr {
-    /// Seconds register (0-59)
-    Seconds = 0x00,
-    /// Minutes register (0-59)
-    Minutes = 0x01,
-    /// Hours register (1-12 + AM/PM or 0-23)
-    Hours = 0x02,
-    /// Day register (1-7)
-    Day = 0x03,
-    /// Date register (1-31)
-    Date = 0x04,
-    /// Month register (1-12)
-    Month = 0x05,
-    /// Year register (0-99)
-    Year = 0x06,
-    /// Alarm 1 seconds register
-    Alarm1Seconds = 0x07,
-    /// Alarm 1 minutes register
-    Alarm1Minutes = 0x08,
-    /// Alarm 1 hours register
-    Alarm1Hours = 0x09,
-    /// Alarm 1 day/date register
-    Alarm1DayDate = 0x0A,
-    /// Alarm 2 minutes register
-    Alarm2Minutes = 0x0B,
-    /// Alarm 2 hours register
-    Alarm2Hours = 0x0C,
-    /// Alarm 2 day/date register
-    Alarm2DayDate = 0x0D,
-    /// Control register
-    Control = 0x0E,
-    /// Control/Status register
-    ControlStatus = 0x0F,
-    /// Aging offset register
-    AgingOffset = 0x10,
-    /// Temperature MSB register
-    MSBTemp = 0x11,
-    /// Temperature LSB register
-    LSBTemp = 0x12,
-}
-
-/// Time representation format for the DS3231.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum TimeRepresentation {
-    /// 24-hour format (0-23)
-    TwentyFourHour = 0,
-    /// 12-hour format (1-12 + AM/PM)
-    TwelveHour = 1,
-}
-impl From<u8> for TimeRepresentation {
-    /// Creates a `TimeRepresentation` from a raw register value.
-    ///
-    /// # Panics
-    /// Panics if the value is not 0 or 1.
-    fn from(v: u8) -> Self {
-        match v {
-            0 => TimeRepresentation::TwentyFourHour,
-            1 => TimeRepresentation::TwelveHour,
-            _ => panic!("Invalid value for TimeRepresentation: {}", v),
-        }
-    }
-}
-impl From<TimeRepresentation> for u8 {
-    /// Converts a `TimeRepresentation` to its raw register value.
-    fn from(v: TimeRepresentation) -> Self {
-        v as u8
-    }
-}
-
-/// Oscillator control for the DS3231.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Ocillator {
-    /// Oscillator is enabled
-    Enabled = 0,
-    /// Oscillator is disabled
-    Disabled = 1,
-}
-impl From<u8> for Ocillator {
-    /// Creates an Ocillator from a raw register value.
-    ///
-    /// # Panics
-    /// Panics if the value is not 0 or 1.
-    fn from(v: u8) -> Self {
-        match v {
-            0 => Ocillator::Enabled,
-            1 => Ocillator::Disabled,
-            _ => panic!("Invalid value for Ocillator: {}", v),
-        }
-    }
-}
-impl From<Ocillator> for u8 {
-    /// Converts an Ocillator to its raw register value.
-    fn from(v: Ocillator) -> Self {
-        v as u8
-    }
-}
-
-/// Interrupt control mode for the DS3231.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum InterruptControl {
-    /// Output square wave on INT/SQW pin
-    SquareWave = 0,
-    /// Output interrupt signal on INT/SQW pin
-    Interrupt = 1,
-}
-impl From<u8> for InterruptControl {
-    /// Creates an `InterruptControl` from a raw register value.
-    ///
-    /// # Panics
-    /// Panics if the value is not 0 or 1.
-    fn from(v: u8) -> Self {
-        match v {
-            0 => InterruptControl::SquareWave,
-            1 => InterruptControl::Interrupt,
-            _ => panic!("Invalid value for InterruptControl: {}", v),
-        }
-    }
-}
-impl From<InterruptControl> for u8 {
-    /// Converts an `InterruptControl` to its raw register value.
-    fn from(v: InterruptControl) -> Self {
-        v as u8
-    }
-}
-
-/// Square wave output frequency options.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum SquareWaveFrequency {
-    /// 1 Hz square wave output
-    Hz1 = 0b00,
-    /// 1.024 kHz square wave output
-    Hz1024 = 0b01,
-    /// 4.096 kHz square wave output
-    Hz4096 = 0b10,
-    /// 8.192 kHz square wave output
-    Hz8192 = 0b11,
-}
-impl From<u8> for SquareWaveFrequency {
-    /// Creates a `SquareWaveFrequency` from a raw register value.
-    ///
-    /// # Panics
-    /// Panics if the value is not 0b00, 0b01, 0b10, or 0b11.
-    fn from(v: u8) -> Self {
-        match v {
-            0b00 => SquareWaveFrequency::Hz1,
-            0b01 => SquareWaveFrequency::Hz1024,
-            0b10 => SquareWaveFrequency::Hz4096,
-            0b11 => SquareWaveFrequency::Hz8192,
-            _ => panic!("Invalid value for SquareWaveFrequency: {}", v),
-        }
-    }
-}
-impl From<SquareWaveFrequency> for u8 {
-    /// Converts a `SquareWaveFrequency` to its raw register value.
-    fn from(v: SquareWaveFrequency) -> Self {
-        v as u8
-    }
-}
-
 /// Error type for DS3231 operations.
 #[derive(Debug)]
 pub enum DS3231Error<I2CE> {
@@ -301,6 +175,8 @@ pub enum DS3231Error<I2CE> {
     I2c(I2CE),
     /// `DateTime` validation or conversion error
     DateTime(DS3231DateTimeError),
+    /// Alarm configuration error
+    Alarm(AlarmError),
 }
 
 impl<I2CE> From<I2CE> for DS3231Error<I2CE> {
@@ -309,277 +185,6 @@ impl<I2CE> From<I2CE> for DS3231Error<I2CE> {
         DS3231Error::I2c(e)
     }
 }
-
-// This macro generates the From<u8> and Into<u8> implementations for the
-// register type
-macro_rules! from_register_u8 {
-    ($typ:ty) => {
-        impl From<u8> for $typ {
-            fn from(v: u8) -> Self {
-                paste::item!([< $typ >](v))
-            }
-        }
-        impl From<$typ> for u8 {
-            fn from(v: $typ) -> Self {
-                v.0
-            }
-        }
-    };
-}
-
-bitfield! {
-    /// Seconds register (0-59) with BCD encoding.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Seconds(u8);
-    impl Debug;
-    /// Tens place of seconds (0-5)
-    pub ten_seconds, set_ten_seconds: 6, 4;
-    /// Ones place of seconds (0-9)
-    pub seconds, set_seconds: 3, 0;
-}
-from_register_u8!(Seconds);
-
-bitfield! {
-    /// Minutes register (0-59) with BCD encoding.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Minutes(u8);
-    impl Debug;
-    /// Tens place of minutes (0-5)
-    pub ten_minutes, set_ten_minutes: 6, 4;
-    /// Ones place of minutes (0-9)
-    pub minutes, set_minutes: 3, 0;
-}
-from_register_u8!(Minutes);
-
-bitfield! {
-    /// Hours register with format selection and BCD encoding.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Hours(u8);
-    impl Debug;
-    /// Time representation format (12/24 hour)
-    pub from into TimeRepresentation, time_representation, set_time_representation: 6, 6;
-    /// PM flag (12-hour) or 20-hour bit (24-hour)
-    pub pm_or_twenty_hours, set_pm_or_twenty_hours: 5, 5;
-    /// Tens place of hours
-    pub ten_hours, set_ten_hours: 4, 4;
-    /// Ones place of hours
-    pub hours, set_hours: 3, 0;
-}
-from_register_u8!(Hours);
-
-bitfield! {
-    /// Day of week register (1-7).
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Day(u8);
-    impl Debug;
-    /// Day of week (1-7)
-    pub day, set_day: 2, 0;
-}
-from_register_u8!(Day);
-
-bitfield! {
-    /// Date register (1-31) with BCD encoding.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Date(u8);
-    impl Debug;
-    /// Tens place of date (0-3)
-    pub ten_date, set_ten_date: 5, 4;
-    /// Ones place of date (0-9)
-    pub date, set_date: 3, 0;
-}
-from_register_u8!(Date);
-
-bitfield! {
-    /// Month register (1-12) with century flag and BCD encoding.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Month(u8);
-    impl Debug;
-    /// Century flag (1 = year 2000+)
-    pub century, set_century: 7;
-    /// Tens place of month (0-1)
-    pub ten_month, set_ten_month: 4, 4;
-    /// Ones place of month (0-9)
-    pub month, set_month: 3, 0;
-}
-from_register_u8!(Month);
-
-bitfield! {
-    /// Year register (0-99) with BCD encoding.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Year(u8);
-    impl Debug;
-    /// Tens place of year (0-9)
-    pub ten_year, set_ten_year: 7, 4;
-    /// Ones place of year (0-9)
-    pub year, set_year: 3, 0;
-}
-from_register_u8!(Year);
-
-bitfield! {
-    /// Control register for device configuration.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Control(u8);
-    impl Debug;
-    /// Oscillator enable/disable control
-    pub from into Ocillator, oscillator_enable, set_oscillator_enable: 7, 7;
-    /// Enable square wave output on battery power
-    pub battery_backed_square_wave, set_battery_backed_square_wave: 6;
-    /// Force temperature conversion
-    pub convert_temperature, set_convert_temperature: 5;
-    /// Square wave output frequency selection
-    pub from into SquareWaveFrequency, square_wave_frequency, set_square_wave_frequency: 4, 3;
-    /// INT/SQW pin function control
-    pub from into InterruptControl, interrupt_control, set_interrupt_control: 2, 2;
-    /// Enable alarm 2 interrupt
-    pub alarm2_interrupt_enable, set_alarm2_interrupt_enable: 1;
-    /// Enable alarm 1 interrupt
-    pub alarm1_interrupt_enable, set_alarm1_interrupt_enable: 0;
-}
-from_register_u8!(Control);
-
-#[cfg(feature = "defmt")]
-impl defmt::Format for Control {
-    fn format(&self, f: defmt::Formatter) {
-        match self.oscillator_enable() {
-            Ocillator::Enabled => defmt::write!(f, "Oscillator enabled"),
-            Ocillator::Disabled => defmt::write!(f, "Oscillator disabled"),
-        }
-        if self.battery_backed_square_wave() {
-            defmt::write!(f, ", Battery backed square wave enabled");
-        }
-        if self.convert_temperature() {
-            defmt::write!(f, ", Temperature conversion enabled");
-        }
-        match self.square_wave_frequency() {
-            SquareWaveFrequency::Hz1 => defmt::write!(f, ", 1 Hz square wave"),
-            SquareWaveFrequency::Hz1024 => defmt::write!(f, ", 1024 Hz square wave"),
-            SquareWaveFrequency::Hz4096 => defmt::write!(f, ", 4096 Hz square wave"),
-            SquareWaveFrequency::Hz8192 => defmt::write!(f, ", 8192 Hz square wave"),
-        }
-        match self.interrupt_control() {
-            InterruptControl::SquareWave => defmt::write!(f, ", Square wave output"),
-            InterruptControl::Interrupt => defmt::write!(f, ", Interrupt output"),
-        }
-        if self.alarm2_interrupt_enable() {
-            defmt::write!(f, ", Alarm 2 interrupt enabled");
-        }
-        if self.alarm1_interrupt_enable() {
-            defmt::write!(f, ", Alarm 1 interrupt enabled");
-        }
-    }
-}
-
-bitfield! {
-    /// Status register for device state and flags.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Status(u8);
-    impl Debug;
-    /// Oscillator stop flag
-    pub oscillator_stop_flag, set_oscillator_stop_flag: 7;
-    /// Enable 32kHz output
-    pub enable_32khz_output, set_enable_32khz_output: 3;
-    /// Device busy flag
-    pub busy, set_busy: 2;
-    /// Alarm 2 triggered flag
-    pub alarm2_flag, set_alarm2_flag: 1;
-    /// Alarm 1 triggered flag
-    pub alarm1_flag, set_alarm1_flag: 0;
-}
-from_register_u8!(Status);
-
-bitfield! {
-    /// Aging offset register for oscillator adjustment.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct AgingOffset(u8);
-    impl Debug;
-    /// Aging offset value (-128 to +127)
-    pub i8, aging_offset, set_aging_offset: 7, 0;
-}
-from_register_u8!(AgingOffset);
-
-bitfield! {
-    /// Temperature register (integer part).
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Temperature(u8);
-    impl Debug;
-    /// Temperature value (-128 to +127)
-    pub i8, temperature, set_temperature: 7, 0;
-}
-from_register_u8!(Temperature);
-
-bitfield! {
-    /// Temperature fraction register (decimal part).
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct TemperatureFraction(u8);
-    impl Debug;
-    /// Temperature fraction value (0.00 to 0.99)
-    pub temperature_fraction, set_temperature_fraction: 7, 0;
-}
-from_register_u8!(TemperatureFraction);
-
-// Alarm register types with mask bits and special control bits
-
-bitfield! {
-    /// Alarm Seconds register with mask bit (only used by Alarm 1).
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct AlarmSeconds(u8);
-    impl Debug;
-    /// Alarm mask bit 1 (A1M1)
-    pub alarm_mask1, set_alarm_mask1: 7;
-    /// Tens place of seconds (0-5)
-    pub ten_seconds, set_ten_seconds: 6, 4;
-    /// Ones place of seconds (0-9)
-    pub seconds, set_seconds: 3, 0;
-}
-from_register_u8!(AlarmSeconds);
-
-bitfield! {
-    /// Alarm Minutes register with mask bit (used by both Alarm 1 and Alarm 2).
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct AlarmMinutes(u8);
-    impl Debug;
-    /// Alarm mask bit 2 (A1M2/A2M2)
-    pub alarm_mask2, set_alarm_mask2: 7;
-    /// Tens place of minutes (0-5)
-    pub ten_minutes, set_ten_minutes: 6, 4;
-    /// Ones place of minutes (0-9)
-    pub minutes, set_minutes: 3, 0;
-}
-from_register_u8!(AlarmMinutes);
-
-bitfield! {
-    /// Alarm Hours register with mask bit and time format control (used by both Alarm 1 and Alarm 2).
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct AlarmHours(u8);
-    impl Debug;
-    /// Alarm mask bit 3 (A1M3/A2M3)
-    pub alarm_mask3, set_alarm_mask3: 7;
-    /// Time representation format (12/24 hour)
-    pub from into TimeRepresentation, time_representation, set_time_representation: 6, 6;
-    /// PM flag (12-hour) or 20-hour bit (24-hour)
-    pub pm_or_twenty_hours, set_pm_or_twenty_hours: 5, 5;
-    /// Tens place of hours
-    pub ten_hours, set_ten_hours: 4, 4;
-    /// Ones place of hours
-    pub hours, set_hours: 3, 0;
-}
-from_register_u8!(AlarmHours);
-
-bitfield! {
-    /// Alarm Day/Date register with mask bit and DY/DT control (used by both Alarm 1 and Alarm 2).
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct AlarmDayDate(u8);
-    impl Debug;
-    /// Alarm mask bit 4 (A1M4/A2M4)
-    pub alarm_mask4, set_alarm_mask4: 7;
-    /// Day/Date select (1=day of week, 0=date of month)
-    pub day_date_select, set_day_date_select: 6;
-    /// Tens place of date (0-3) when DY/DT=0, or unused when DY/DT=1
-    pub ten_date, set_ten_date: 5, 4;
-    /// Day of week (1-7) when DY/DT=1, or ones place of date (0-9) when DY/DT=0
-    pub day_or_date, set_day_or_date: 3, 0;
-}
-from_register_u8!(AlarmDayDate);
 
 /// DS3231 Real-Time Clock driver.
 ///
@@ -787,6 +392,187 @@ where
         Ok(())
     }
 
+    /// Gets the current Alarm 1 configuration from the device.
+    ///
+    /// # Returns
+    /// * `Ok(Alarm1Config)` - The current alarm 1 configuration
+    /// * `Err(DS3231Error)` on error
+    ///
+    /// # Errors
+    /// * Returns `DS3231Error::I2c` if there is an I2C communication error
+    /// * Returns `DS3231Error::Alarm` if the device contains invalid alarm register values
+    pub async fn alarm1(&mut self) -> Result<Alarm1Config, DS3231Error<E>> {
+        let seconds = self.alarm1_second().await?;
+        let minutes = self.alarm1_minute().await?;
+        let hours = self.alarm1_hour().await?;
+        let day_date = self.alarm1_day_date().await?;
+
+        let alarm = DS3231Alarm1::from_registers(seconds, minutes, hours, day_date);
+        alarm.to_config().map_err(DS3231Error::Alarm)
+    }
+
+    /// Sets Alarm 1 configuration.
+    ///
+    /// Alarm 1 supports seconds-level precision and various matching modes.
+    ///
+    /// # Arguments
+    /// * `config` - The alarm configuration
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err(DS3231Error)` on error
+    ///
+    /// # Errors
+    /// * Returns `DS3231Error::I2c` if there is an I2C communication error
+    /// * Returns `DS3231Error::Alarm` if the provided configuration is invalid
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ds3231::{DS3231, Alarm1Config};
+    ///
+    /// // Daily alarm at 9:30:00 AM (24-hour mode)
+    /// let daily_alarm = Alarm1Config::AtTime {
+    ///     hours: 9,
+    ///     minutes: 30,
+    ///     seconds: 0,
+    ///     is_pm: None, // 24-hour mode
+    /// };
+    /// rtc.set_alarm1(&daily_alarm).await?;
+    ///
+    /// // Weekly alarm every Monday at 6:30:15 PM (12-hour mode)
+    /// let weekly_alarm = Alarm1Config::AtTimeOnDay {
+    ///     hours: 6,
+    ///     minutes: 30,
+    ///     seconds: 15,
+    ///     day: 2, // Monday (1=Sunday, 2=Monday, etc.)
+    ///     is_pm: Some(true), // 6:30 PM
+    /// };
+    /// rtc.set_alarm1(&weekly_alarm).await?;
+    ///
+    /// // Monthly alarm on the 15th at 12:00:00 PM
+    /// let monthly_alarm = Alarm1Config::AtTimeOnDate {
+    ///     hours: 12,
+    ///     minutes: 0,
+    ///     seconds: 0,
+    ///     date: 15, // 15th of every month
+    ///     is_pm: None, // 24-hour mode
+    /// };
+    /// rtc.set_alarm1(&monthly_alarm).await?;
+    ///
+    /// // Alarm every second (useful for testing)
+    /// let frequent_alarm = Alarm1Config::EverySecond;
+    /// rtc.set_alarm1(&frequent_alarm).await?;
+    ///
+    /// // Alarm when seconds match (every minute at 30 seconds)
+    /// let seconds_alarm = Alarm1Config::AtSeconds {
+    ///     seconds: 30,
+    /// };
+    /// rtc.set_alarm1(&seconds_alarm).await?;
+    ///
+    /// // Alarm when minutes and seconds match (every hour at 15:45)
+    /// let minutes_seconds_alarm = Alarm1Config::AtMinutesSeconds {
+    ///     minutes: 15,
+    ///     seconds: 45,
+    /// };
+    /// rtc.set_alarm1(&minutes_seconds_alarm).await?;
+    /// ```
+    pub async fn set_alarm1(&mut self, config: &Alarm1Config) -> Result<(), DS3231Error<E>> {
+        let alarm = DS3231Alarm1::from_config(config).map_err(DS3231Error::Alarm)?;
+
+        self.set_alarm1_second(alarm.seconds()).await?;
+        self.set_alarm1_minute(alarm.minutes()).await?;
+        self.set_alarm1_hour(alarm.hours()).await?;
+        self.set_alarm1_day_date(alarm.day_date()).await?;
+
+        Ok(())
+    }
+
+    /// Gets the current Alarm 2 configuration from the device.
+    ///
+    /// # Returns
+    /// * `Ok(Alarm2Config)` - The current alarm 2 configuration
+    /// * `Err(DS3231Error)` on error
+    ///
+    /// # Errors
+    /// * Returns `DS3231Error::I2c` if there is an I2C communication error
+    /// * Returns `DS3231Error::Alarm` if the device contains invalid alarm register values
+    pub async fn alarm2(&mut self) -> Result<Alarm2Config, DS3231Error<E>> {
+        let minutes = self.alarm2_minute().await?;
+        let hours = self.alarm2_hour().await?;
+        let day_date = self.alarm2_day_date().await?;
+
+        let alarm = DS3231Alarm2::from_registers(minutes, hours, day_date);
+        alarm.to_config().map_err(DS3231Error::Alarm)
+    }
+
+    /// Sets Alarm 2 configuration.
+    ///
+    /// Alarm 2 has no seconds register and always triggers at 00 seconds of the matching minute.
+    /// It provides minute-level precision for various matching modes.
+    ///
+    /// # Arguments
+    /// * `config` - The alarm configuration
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err(DS3231Error)` on error
+    ///
+    /// # Errors
+    /// * Returns `DS3231Error::I2c` if there is an I2C communication error
+    /// * Returns `DS3231Error::Alarm` if the provided configuration is invalid
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ds3231::{DS3231, Alarm2Config};
+    ///
+    /// // Daily alarm at 9:30:00 AM (triggers at 00 seconds)
+    /// let daily_alarm = Alarm2Config::AtTime {
+    ///     hours: 9,
+    ///     minutes: 30,
+    ///     is_pm: None, // 24-hour mode
+    /// };
+    /// rtc.set_alarm2(&daily_alarm).await?;
+    ///
+    /// // Weekly alarm every Friday at 5:00:00 PM (12-hour mode)
+    /// let weekly_alarm = Alarm2Config::AtTimeOnDay {
+    ///     hours: 5,
+    ///     minutes: 0,
+    ///     day: 6, // Friday (1=Sunday, 6=Friday)
+    ///     is_pm: Some(true), // 5:00 PM
+    /// };
+    /// rtc.set_alarm2(&weekly_alarm).await?;
+    ///
+    /// // Monthly alarm on the 1st at 8:15:00 AM
+    /// let monthly_alarm = Alarm2Config::AtTimeOnDate {
+    ///     hours: 8,
+    ///     minutes: 15,
+    ///     date: 1, // 1st of every month
+    ///     is_pm: None, // 24-hour mode
+    /// };
+    /// rtc.set_alarm2(&monthly_alarm).await?;
+    ///
+    /// // Alarm every minute (at 00 seconds, useful for testing)
+    /// let frequent_alarm = Alarm2Config::EveryMinute;
+    /// rtc.set_alarm2(&frequent_alarm).await?;
+    ///
+    /// // Alarm when minutes match (every hour at 45:00)
+    /// let minutes_alarm = Alarm2Config::AtMinutes {
+    ///     minutes: 45,
+    /// };
+    /// rtc.set_alarm2(&minutes_alarm).await?;
+    /// ```
+    pub async fn set_alarm2(&mut self, config: &Alarm2Config) -> Result<(), DS3231Error<E>> {
+        let alarm = DS3231Alarm2::from_config(config).map_err(DS3231Error::Alarm)?;
+
+        self.set_alarm2_minute(alarm.minutes()).await?;
+        self.set_alarm2_hour(alarm.hours()).await?;
+        self.set_alarm2_day_date(alarm.day_date()).await?;
+
+        Ok(())
+    }
+
     impl_register_access!(
         (second, RegAddr::Seconds, Seconds),
         (minute, RegAddr::Minutes, Minutes),
@@ -810,6 +596,7 @@ where
     );
 }
 
+#[maybe_async_cfg::maybe(sync(cfg(not(feature = "async"))), async(feature = "async", keep_self))]
 #[cfg(test)]
 mod tests {
     extern crate alloc;
@@ -833,10 +620,6 @@ mod tests {
         _dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_read_control() {
@@ -854,10 +637,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_write_control() {
@@ -875,10 +654,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_configure() {
@@ -906,10 +681,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_read_datetime() {
@@ -941,10 +712,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_set_datetime() {
@@ -972,10 +739,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_register_operations() {
@@ -1015,10 +778,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_read_temperature() {
@@ -1047,10 +806,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_alarm_registers() {
@@ -1082,7 +837,7 @@ mod tests {
             I2cTrans::write_read(
                 DEVICE_ADDRESS,
                 vec![RegAddr::Alarm2DayDate as u8],
-                vec![0x20],
+                vec![0x15],
             ),
             // Test setting alarm registers
             I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Seconds as u8, 0x00]),
@@ -1124,10 +879,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_status_register_flags() {
@@ -1192,67 +943,500 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
-    async fn test_individual_registers() {
+    async fn test_alarm1_high_level_operations() {
         let mock = setup_mock(&[
-            // Test all register reads
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Day as u8], vec![0x04]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Date as u8], vec![0x15]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Month as u8], vec![0x03]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Year as u8], vec![0x24]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::AgingOffset as u8], vec![0x05]),
-            // Test all register writes
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Day as u8, 0x02]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Date as u8, 0x10]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Month as u8, 0x06]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Year as u8, 0x25]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::AgingOffset as u8, 0x0A]),
+            // Read alarm1 registers
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm1Seconds as u8],
+                vec![0x30],
+            ),
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm1Minutes as u8],
+                vec![0x45],
+            ),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm1Hours as u8], vec![0x12]),
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm1DayDate as u8],
+                vec![0x15],
+            ),
+            // Set alarm1 configuration
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Seconds as u8, 0x00]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Minutes as u8, 0x30]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Hours as u8, 0x09]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1DayDate as u8, 0x80]),
         ]);
 
         let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
 
-        // Test reading all individual registers
-        let day = dev.day().await.unwrap();
-        assert_eq!(day.day(), 4);
+        // Test reading alarm1
+        let alarm1 = dev.alarm1().await.unwrap();
+        match alarm1 {
+            Alarm1Config::AtTimeOnDate {
+                hours,
+                minutes,
+                seconds,
+                date,
+                is_pm,
+            } => {
+                assert_eq!(hours, 12);
+                assert_eq!(minutes, 45);
+                assert_eq!(seconds, 30);
+                assert_eq!(date, 15);
+                assert_eq!(is_pm, None);
+            }
+            _ => panic!("Expected AtTimeOnDate alarm configuration"),
+        }
 
-        let date = dev.date().await.unwrap();
-        assert_eq!(date.date(), 5);
-        assert_eq!(date.ten_date(), 1);
-
-        let month = dev.month().await.unwrap();
-        assert_eq!(month.month(), 3);
-        assert_eq!(month.ten_month(), 0);
-        assert!(!month.century());
-
-        let year = dev.year().await.unwrap();
-        assert_eq!(year.year(), 4);
-        assert_eq!(year.ten_year(), 2);
-
-        let aging_offset = dev.aging_offset().await.unwrap();
-        assert_eq!(aging_offset.aging_offset(), 5);
-
-        // Test writing all individual registers
-        dev.set_day(Day(0x02)).await.unwrap();
-        dev.set_date(Date(0x10)).await.unwrap();
-        dev.set_month(Month(0x06)).await.unwrap();
-        dev.set_year(Year(0x25)).await.unwrap();
-        dev.set_aging_offset(AgingOffset(0x0A)).await.unwrap();
+        // Test setting alarm1
+        let config = Alarm1Config::AtTime {
+            hours: 9,
+            minutes: 30,
+            seconds: 0,
+            is_pm: None,
+        };
+        dev.set_alarm1(&config).await.unwrap();
 
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
-    async fn test_twelve_hour_mode() {
+    async fn test_alarm2_high_level_operations() {
+        let mock = setup_mock(&[
+            // Read alarm2 registers
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm2Minutes as u8],
+                vec![0x45],
+            ),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Alarm2Hours as u8], vec![0x12]),
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Alarm2DayDate as u8],
+                vec![0x15],
+            ),
+            // Set alarm2 configuration
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm2Minutes as u8, 0x30]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm2Hours as u8, 0x14]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm2DayDate as u8, 0x80]),
+        ]);
+
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        // Test reading alarm2
+        let alarm2 = dev.alarm2().await.unwrap();
+        match alarm2 {
+            Alarm2Config::AtTimeOnDate {
+                hours,
+                minutes,
+                date,
+                is_pm,
+            } => {
+                assert_eq!(hours, 12);
+                assert_eq!(minutes, 45);
+                assert_eq!(date, 15);
+                assert_eq!(is_pm, None);
+            }
+            _ => panic!("Expected AtTimeOnDate alarm configuration"),
+        }
+
+        // Test setting alarm2
+        let config = Alarm2Config::AtTime {
+            hours: 14,
+            minutes: 30,
+            is_pm: None,
+        };
+        dev.set_alarm2(&config).await.unwrap();
+
+        dev.i2c.done();
+    }
+
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_alarm_error_handling() {
+        let mock = setup_mock(&[]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        // Test invalid alarm1 configuration
+        let invalid_config = Alarm1Config::AtTime {
+            hours: 25, // Invalid hour
+            minutes: 30,
+            seconds: 0,
+            is_pm: None,
+        };
+        let result = dev.set_alarm1(&invalid_config).await;
+        assert!(matches!(result, Err(DS3231Error::Alarm(_))));
+
+        // Test invalid alarm2 configuration
+        let invalid_config = Alarm2Config::AtTime {
+            hours: 25, // Invalid hour
+            minutes: 30,
+            is_pm: None,
+        };
+        let result = dev.set_alarm2(&invalid_config).await;
+        assert!(matches!(result, Err(DS3231Error::Alarm(_))));
+
+        dev.i2c.done();
+    }
+
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_datetime_error_handling() {
+        // Test invalid datetime conversion
+        let invalid_datetime_data = [
+            0x60, // Invalid seconds (60)
+            0x30, // minutes
+            0x15, // hours
+            0x04, // day
+            0x14, // date
+            0x03, // month
+            0x24, // year
+        ];
+
+        let mock = setup_mock(&[I2cTrans::write_read(
+            DEVICE_ADDRESS,
+            vec![RegAddr::Seconds as u8],
+            invalid_datetime_data.to_vec(),
+        )]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        let result = dev.datetime().await;
+        assert!(matches!(result, Err(DS3231Error::DateTime(_))));
+
+        dev.i2c.done();
+    }
+
+    #[test]
+    fn test_day_date_select_conversions() {
+        // Test DayDateSelect conversions
+        assert_eq!(DayDateSelect::from(0), DayDateSelect::Date);
+        assert_eq!(DayDateSelect::from(1), DayDateSelect::Day);
+        assert_eq!(u8::from(DayDateSelect::Date), 0);
+        assert_eq!(u8::from(DayDateSelect::Day), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid value for DayDateSelect: 2")]
+    fn test_invalid_day_date_select_conversion() {
+        let _ = DayDateSelect::from(2);
+    }
+
+    #[test]
+    fn test_config_debug_and_clone() {
+        let config = Config {
+            time_representation: TimeRepresentation::TwentyFourHour,
+            square_wave_frequency: SquareWaveFrequency::Hz1,
+            interrupt_control: InterruptControl::SquareWave,
+            battery_backed_square_wave: false,
+            oscillator_enable: Ocillator::Enabled,
+        };
+
+        // Test Debug trait
+        let debug_str = alloc::format!("{:?}", config);
+        assert!(debug_str.contains("TwentyFourHour"));
+
+        // Test Clone trait
+        let cloned_config = config.clone();
+        assert_eq!(config, cloned_config);
+
+        // Test Copy trait
+        let copied_config = config;
+        assert_eq!(config, copied_config);
+    }
+
+    #[test]
+    fn test_register_bitfield_operations() {
+        // Test Seconds register
+        let mut seconds = Seconds::default();
+        seconds.set_seconds(5);
+        seconds.set_ten_seconds(3);
+        assert_eq!(seconds.seconds(), 5);
+        assert_eq!(seconds.ten_seconds(), 3);
+
+        // Test Minutes register
+        let mut minutes = Minutes::default();
+        minutes.set_minutes(8);
+        minutes.set_ten_minutes(4);
+        assert_eq!(minutes.minutes(), 8);
+        assert_eq!(minutes.ten_minutes(), 4);
+
+        // Test Hours register
+        let mut hours = Hours::default();
+        hours.set_time_representation(TimeRepresentation::TwelveHour);
+        hours.set_pm_or_twenty_hours(1);
+        hours.set_ten_hours(1);
+        hours.set_hours(2);
+        assert_eq!(hours.time_representation(), TimeRepresentation::TwelveHour);
+        assert_eq!(hours.pm_or_twenty_hours(), 1);
+        assert_eq!(hours.ten_hours(), 1);
+        assert_eq!(hours.hours(), 2);
+
+        // Test Day register
+        let mut day = Day::default();
+        day.set_day(3);
+        assert_eq!(day.day(), 3);
+
+        // Test Date register
+        let mut date = Date::default();
+        date.set_date(5);
+        date.set_ten_date(2);
+        assert_eq!(date.date(), 5);
+        assert_eq!(date.ten_date(), 2);
+
+        // Test Month register
+        let mut month = Month::default();
+        month.set_month(2);
+        month.set_ten_month(1);
+        month.set_century(true);
+        assert_eq!(month.month(), 2);
+        assert_eq!(month.ten_month(), 1);
+        assert!(month.century());
+
+        // Test Year register
+        let mut year = Year::default();
+        year.set_year(4);
+        year.set_ten_year(2);
+        assert_eq!(year.year(), 4);
+        assert_eq!(year.ten_year(), 2);
+
+        // Test Control register
+        let mut control = Control::default();
+        control.set_oscillator_enable(Ocillator::Disabled);
+        control.set_battery_backed_square_wave(true);
+        control.set_convert_temperature(true);
+        control.set_square_wave_frequency(SquareWaveFrequency::Hz4096);
+        control.set_interrupt_control(InterruptControl::Interrupt);
+        control.set_alarm2_interrupt_enable(true);
+        control.set_alarm1_interrupt_enable(true);
+
+        assert_eq!(control.oscillator_enable(), Ocillator::Disabled);
+        assert!(control.battery_backed_square_wave());
+        assert!(control.convert_temperature());
+        assert_eq!(control.square_wave_frequency(), SquareWaveFrequency::Hz4096);
+        assert_eq!(control.interrupt_control(), InterruptControl::Interrupt);
+        assert!(control.alarm2_interrupt_enable());
+        assert!(control.alarm1_interrupt_enable());
+
+        // Test Status register
+        let mut status = Status::default();
+        status.set_oscillator_stop_flag(true);
+        status.set_enable_32khz_output(true);
+        status.set_busy(true);
+        status.set_alarm2_flag(true);
+        status.set_alarm1_flag(true);
+
+        assert!(status.oscillator_stop_flag());
+        assert!(status.enable_32khz_output());
+        assert!(status.busy());
+        assert!(status.alarm2_flag());
+        assert!(status.alarm1_flag());
+
+        // Test AgingOffset register
+        let mut aging_offset = AgingOffset::default();
+        aging_offset.set_aging_offset(-10);
+        assert_eq!(aging_offset.aging_offset(), -10);
+
+        // Test Temperature register
+        let mut temperature = Temperature::default();
+        temperature.set_temperature(25);
+        assert_eq!(temperature.temperature(), 25);
+
+        // Test TemperatureFraction register
+        let mut temp_frac = TemperatureFraction::default();
+        temp_frac.set_temperature_fraction(0x40);
+        assert_eq!(temp_frac.temperature_fraction(), 0x40);
+    }
+
+    #[test]
+    fn test_alarm_register_bitfield_operations() {
+        // Test AlarmSeconds register
+        let mut alarm_seconds = AlarmSeconds::default();
+        alarm_seconds.set_alarm_mask1(true);
+        alarm_seconds.set_ten_seconds(3);
+        alarm_seconds.set_seconds(5);
+        assert!(alarm_seconds.alarm_mask1());
+        assert_eq!(alarm_seconds.ten_seconds(), 3);
+        assert_eq!(alarm_seconds.seconds(), 5);
+
+        // Test AlarmMinutes register
+        let mut alarm_minutes = AlarmMinutes::default();
+        alarm_minutes.set_alarm_mask2(true);
+        alarm_minutes.set_ten_minutes(4);
+        alarm_minutes.set_minutes(8);
+        assert!(alarm_minutes.alarm_mask2());
+        assert_eq!(alarm_minutes.ten_minutes(), 4);
+        assert_eq!(alarm_minutes.minutes(), 8);
+
+        // Test AlarmHours register
+        let mut alarm_hours = AlarmHours::default();
+        alarm_hours.set_alarm_mask3(true);
+        alarm_hours.set_time_representation(TimeRepresentation::TwelveHour);
+        alarm_hours.set_pm_or_twenty_hours(1);
+        alarm_hours.set_ten_hours(1);
+        alarm_hours.set_hours(2);
+        assert!(alarm_hours.alarm_mask3());
+        assert_eq!(
+            alarm_hours.time_representation(),
+            TimeRepresentation::TwelveHour
+        );
+        assert_eq!(alarm_hours.pm_or_twenty_hours(), 1);
+        assert_eq!(alarm_hours.ten_hours(), 1);
+        assert_eq!(alarm_hours.hours(), 2);
+
+        // Test AlarmDayDate register
+        let mut alarm_day_date = AlarmDayDate::default();
+        alarm_day_date.set_alarm_mask4(true);
+        alarm_day_date.set_day_date_select(DayDateSelect::Day);
+        alarm_day_date.set_ten_date(2);
+        alarm_day_date.set_day_or_date(5);
+        assert!(alarm_day_date.alarm_mask4());
+        assert_eq!(alarm_day_date.day_date_select(), DayDateSelect::Day);
+        assert_eq!(alarm_day_date.ten_date(), 2);
+        assert_eq!(alarm_day_date.day_or_date(), 5);
+    }
+
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_comprehensive_register_coverage() {
+        let mock = setup_mock(&[
+            // Test all register reads
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Seconds as u8], vec![0x45]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Minutes as u8], vec![0x30]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Hours as u8], vec![0x15]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Day as u8], vec![0x04]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Date as u8], vec![0x14]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Month as u8], vec![0x03]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Year as u8], vec![0x24]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Control as u8], vec![0x1C]),
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::ControlStatus as u8],
+                vec![0x88],
+            ),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::AgingOffset as u8], vec![0x05]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::MSBTemp as u8], vec![0x19]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::LSBTemp as u8], vec![0x40]),
+            // Test all register writes
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Seconds as u8, 0x30]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Minutes as u8, 0x45]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Hours as u8, 0x12]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Day as u8, 0x02]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Date as u8, 0x10]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Month as u8, 0x06]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Year as u8, 0x25]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Control as u8, 0x04]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::ControlStatus as u8, 0x00]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::AgingOffset as u8, 0x0A]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::MSBTemp as u8, 0x20]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::LSBTemp as u8, 0x80]),
+        ]);
+
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        // Test reading all registers
+        let _seconds = dev.second().await.unwrap();
+        let _minutes = dev.minute().await.unwrap();
+        let _hours = dev.hour().await.unwrap();
+        let _day = dev.day().await.unwrap();
+        let _date = dev.date().await.unwrap();
+        let _month = dev.month().await.unwrap();
+        let _year = dev.year().await.unwrap();
+        let _control = dev.control().await.unwrap();
+        let _status = dev.status().await.unwrap();
+        let _aging_offset = dev.aging_offset().await.unwrap();
+        let _temperature = dev.temperature().await.unwrap();
+        let _temp_fraction = dev.temperature_fraction().await.unwrap();
+
+        // Test writing all registers
+        dev.set_second(Seconds(0x30)).await.unwrap();
+        dev.set_minute(Minutes(0x45)).await.unwrap();
+        dev.set_hour(Hours(0x12)).await.unwrap();
+        dev.set_day(Day(0x02)).await.unwrap();
+        dev.set_date(Date(0x10)).await.unwrap();
+        dev.set_month(Month(0x06)).await.unwrap();
+        dev.set_year(Year(0x25)).await.unwrap();
+        dev.set_control(Control(0x04)).await.unwrap();
+        dev.set_status(Status(0x00)).await.unwrap();
+        dev.set_aging_offset(AgingOffset(0x0A)).await.unwrap();
+        dev.set_temperature(Temperature(0x20)).await.unwrap();
+        dev.set_temperature_fraction(TemperatureFraction(0x80))
+            .await
+            .unwrap();
+
+        dev.i2c.done();
+    }
+
+    #[test]
+    fn test_error_type_coverage() {
+        use crate::alarm::AlarmError;
+        use crate::datetime::DS3231DateTimeError;
+
+        // Test DS3231Error variants
+        let datetime_error: DS3231Error<()> =
+            DS3231Error::DateTime(DS3231DateTimeError::InvalidDateTime);
+        assert!(matches!(datetime_error, DS3231Error::DateTime(_)));
+
+        let alarm_error: DS3231Error<()> = DS3231Error::Alarm(AlarmError::InvalidTime("test"));
+        assert!(matches!(alarm_error, DS3231Error::Alarm(_)));
+    }
+
+    #[cfg(feature = "defmt")]
+    #[test]
+    fn test_control_defmt_formatting() {
+        // Test defmt formatting for Control register
+        let mut control = Control::default();
+        control.set_oscillator_enable(Ocillator::Enabled);
+        control.set_battery_backed_square_wave(true);
+        control.set_convert_temperature(true);
+        control.set_square_wave_frequency(SquareWaveFrequency::Hz1024);
+        control.set_interrupt_control(InterruptControl::Interrupt);
+        control.set_alarm2_interrupt_enable(true);
+        control.set_alarm1_interrupt_enable(true);
+
+        // This test ensures the defmt::Format implementation compiles and covers the code
+        // In a real embedded environment, this would produce formatted output
+        let _formatted = defmt::Debug2Format(&control);
+    }
+
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_twelve_hour_mode_datetime() {
+        // Test setting datetime in 12-hour mode
+        let dt = NaiveDate::from_ymd_opt(2024, 3, 14)
+            .unwrap()
+            .and_hms_opt(15, 30, 0)
+            .unwrap();
+
+        let mock = setup_mock(&[
+            // Configure to 12-hour mode first
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Control as u8], vec![0]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Control as u8, 0]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Hours as u8], vec![0]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Hours as u8, 0x40]), // 12-hour mode
+            // Set datetime
+            I2cTrans::write(
+                DEVICE_ADDRESS,
+                vec![
+                    RegAddr::Seconds as u8,
+                    0x00, // seconds
+                    0x30, // minutes
+                    0x63, // hours (3 PM in 12-hour mode with PM bit set)
+                    0x04, // day
+                    0x14, // date
+                    0x03, // month
+                    0x24, // year
+                ],
+            ),
+        ]);
+
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        // Configure to 12-hour mode
         let config = Config {
             time_representation: TimeRepresentation::TwelveHour,
             square_wave_frequency: SquareWaveFrequency::Hz1,
@@ -1260,21 +1444,11 @@ mod tests {
             battery_backed_square_wave: false,
             oscillator_enable: Ocillator::Enabled,
         };
-
-        let mock = setup_mock(&[
-            // Read control register
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Control as u8], vec![0]),
-            // Write control register
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Control as u8, 0]),
-            // Read hours register
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Hours as u8], vec![0]),
-            // Write hours register with 12-hour mode bit set
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Hours as u8, 0x40]), // Bit 6 set for 12-hour mode
-        ]);
-
-        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
         dev.configure(&config).await.unwrap();
-        assert_eq!(dev.time_representation, TimeRepresentation::TwelveHour);
+
+        // Set datetime in 12-hour mode
+        dev.set_datetime(&dt).await.unwrap();
+
         dev.i2c.done();
     }
 
@@ -1347,13 +1521,87 @@ mod tests {
         assert!(matches!(ds3231_error, DS3231Error::I2c(MockI2cError)));
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
-    async fn test_alarm_mask_bits_and_dydt() {
+    async fn test_individual_registers() {
+        let mock = setup_mock(&[
+            // Test all register reads
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Day as u8], vec![0x04]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Date as u8], vec![0x15]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Month as u8], vec![0x03]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Year as u8], vec![0x24]),
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::AgingOffset as u8], vec![0x05]),
+            // Test all register writes
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Day as u8, 0x02]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Date as u8, 0x10]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Month as u8, 0x06]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Year as u8, 0x25]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::AgingOffset as u8, 0x0A]),
+        ]);
+
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        // Test reading all individual registers
+        let day = dev.day().await.unwrap();
+        assert_eq!(day.day(), 4);
+
+        let date = dev.date().await.unwrap();
+        assert_eq!(date.date(), 5);
+        assert_eq!(date.ten_date(), 1);
+
+        let month = dev.month().await.unwrap();
+        assert_eq!(month.month(), 3);
+        assert_eq!(month.ten_month(), 0);
+        assert!(!month.century());
+
+        let year = dev.year().await.unwrap();
+        assert_eq!(year.year(), 4);
+        assert_eq!(year.ten_year(), 2);
+
+        let aging_offset = dev.aging_offset().await.unwrap();
+        assert_eq!(aging_offset.aging_offset(), 5);
+
+        // Test writing all individual registers
+        dev.set_day(Day(0x02)).await.unwrap();
+        dev.set_date(Date(0x10)).await.unwrap();
+        dev.set_month(Month(0x06)).await.unwrap();
+        dev.set_year(Year(0x25)).await.unwrap();
+        dev.set_aging_offset(AgingOffset(0x0A)).await.unwrap();
+
+        dev.i2c.done();
+    }
+
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_twelve_hour_mode() {
+        let config = Config {
+            time_representation: TimeRepresentation::TwelveHour,
+            square_wave_frequency: SquareWaveFrequency::Hz1,
+            interrupt_control: InterruptControl::SquareWave,
+            battery_backed_square_wave: false,
+            oscillator_enable: Ocillator::Enabled,
+        };
+
+        let mock = setup_mock(&[
+            // Read control register
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Control as u8], vec![0]),
+            // Write control register
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Control as u8, 0]),
+            // Read hours register
+            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Hours as u8], vec![0]),
+            // Write hours register with 12-hour mode bit set
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Hours as u8, 0x40]), // Bit 6 set for 12-hour mode
+        ]);
+
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+        dev.configure(&config).await.unwrap();
+        assert_eq!(dev.time_representation, TimeRepresentation::TwelveHour);
+        dev.i2c.done();
+    }
+
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_read_alarm_mask_bits_and_dydt() {
         let mock = setup_mock(&[
             // Test reading alarm registers with mask bits set
             I2cTrans::write_read(
@@ -1374,19 +1622,13 @@ mod tests {
             I2cTrans::write_read(
                 DEVICE_ADDRESS,
                 vec![RegAddr::Alarm1DayDate as u8],
-                vec![0xC3], // A1M4 + DY/DT set + day 3
+                vec![0xC3], // A1M4=1, DY/DT=1, day=3
             ),
             I2cTrans::write_read(
                 DEVICE_ADDRESS,
                 vec![RegAddr::Alarm2DayDate as u8],
                 vec![0x15], // A2M4 clear + DY/DT clear + date 15
             ),
-            // Test writing alarm registers with mask bits
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Seconds as u8, 0x80]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Minutes as u8, 0x85]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Hours as u8, 0x89]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1DayDate as u8, 0xC3]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm2DayDate as u8, 0x15]),
         ]);
 
         let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
@@ -1409,14 +1651,33 @@ mod tests {
 
         let alarm1_day_date = dev.alarm1_day_date().await.unwrap();
         assert!(alarm1_day_date.alarm_mask4()); // Mask bit should be set
-        assert!(alarm1_day_date.day_date_select()); // DY/DT should be set (day mode)
-        assert_eq!(alarm1_day_date.day_or_date(), 3); // Day 3
+        assert_eq!(alarm1_day_date.day_date_select(), DayDateSelect::Day); // DY/DT should be set (day mode) for 0xC3
+        assert_eq!(alarm1_day_date.day_or_date(), 3); // Day 3 (0xC3 & 0x0F = 3)
 
         let alarm2_day_date = dev.alarm2_day_date().await.unwrap();
         assert!(!alarm2_day_date.alarm_mask4()); // Mask bit should be clear
-        assert!(!alarm2_day_date.day_date_select()); // DY/DT should be clear (date mode)
+        assert_eq!(alarm2_day_date.day_date_select(), DayDateSelect::Date); // DY/DT should be clear (date mode)
         assert_eq!(alarm2_day_date.day_or_date(), 5); // Date 5
         assert_eq!(alarm2_day_date.ten_date(), 1); // Ten date 1
+
+        dev.i2c.done();
+    }
+
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_write_alarm_mask_bits_and_dydt() {
+        let mock = setup_mock(&[
+            // Test writing alarm registers with mask bits
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Seconds as u8, 0x80]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Minutes as u8, 0x85]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1Hours as u8, 0x89]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm1DayDate as u8, 0xC3]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm2Minutes as u8, 0x45]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm2Hours as u8, 0x14]),
+            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Alarm2DayDate as u8, 0x15]),
+        ]);
+
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
 
         // Test writing alarm registers with mask bits
         let mut alarm1_sec = AlarmSeconds(0x00);
@@ -1433,14 +1694,40 @@ mod tests {
 
         let mut alarm1_day_date = AlarmDayDate(0x03);
         alarm1_day_date.set_alarm_mask4(true);
-        alarm1_day_date.set_day_date_select(true); // Set to day mode
+        alarm1_day_date.set_day_date_select(DayDateSelect::Day); // Set to day mode
         dev.set_alarm1_day_date(alarm1_day_date).await.unwrap();
+
+        let alarm2_min = AlarmMinutes(0x45);
+        dev.set_alarm2_minute(alarm2_min).await.unwrap();
+
+        let alarm2_hour = AlarmHours(0x14);
+        dev.set_alarm2_hour(alarm2_hour).await.unwrap();
 
         let mut alarm2_day_date = AlarmDayDate(0x15);
         alarm2_day_date.set_alarm_mask4(false);
-        alarm2_day_date.set_day_date_select(false); // Set to date mode
+        alarm2_day_date.set_day_date_select(DayDateSelect::Date); // Set to date mode
         dev.set_alarm2_day_date(alarm2_day_date).await.unwrap();
 
         dev.i2c.done();
+    }
+
+    #[test]
+    fn test_ds3231_error_display_coverage() {
+        // Test DS3231Error Debug implementation for different error types
+        use crate::alarm::AlarmError;
+        use crate::datetime::DS3231DateTimeError;
+
+        let i2c_error: DS3231Error<&str> = DS3231Error::I2c("I2C communication failed");
+        let debug_str = alloc::format!("{:?}", i2c_error);
+        assert!(debug_str.contains("I2c"));
+
+        let datetime_error: DS3231Error<()> =
+            DS3231Error::DateTime(DS3231DateTimeError::InvalidDateTime);
+        let debug_str = alloc::format!("{:?}", datetime_error);
+        assert!(debug_str.contains("DateTime"));
+
+        let alarm_error: DS3231Error<()> = DS3231Error::Alarm(AlarmError::InvalidTime("test"));
+        let debug_str = alloc::format!("{:?}", alarm_error);
+        assert!(debug_str.contains("Alarm"));
     }
 }

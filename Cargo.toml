@@ -20,6 +20,7 @@ log = { version = "0.4.27", optional = true }
 defmt = { version = "1.0.1", optional = true }
 paste = { version = "1.0.15" }
 maybe-async-cfg = "0.2.5"
+cfg-if = "1.0"
 
 [dev-dependencies]
 embedded-hal-mock = { version = "0.11.1", features = ["eh1", "embedded-hal-async"] }
