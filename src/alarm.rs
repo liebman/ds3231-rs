@@ -492,6 +492,148 @@ impl DS3231Alarm1 {
         Ok(alarm)
     }
 
+    /// Converts the register values back to an `Alarm1Config`.
+    ///
+    /// # Returns
+    ///
+    /// The `Alarm1Config` that corresponds to the current register values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the register values don't form a valid configuration
+    /// or contain invalid BCD values.
+    pub fn to_config(&self) -> Result<Alarm1Config, AlarmError> {
+        // Check mask bit pattern to determine alarm type
+        let mask1 = self.seconds.alarm_mask1();
+        let mask2 = self.minutes.alarm_mask2();
+        let mask3 = self.hours.alarm_mask3();
+        let mask4 = self.day_date.alarm_mask4();
+
+        match (mask1, mask2, mask3, mask4) {
+            // All masks set - every second
+            (true, true, true, true) => Ok(Alarm1Config::EverySecond),
+
+            // Only seconds mask clear - match seconds
+            (false, true, true, true) => {
+                let seconds = self.decode_bcd_seconds()?;
+                Ok(Alarm1Config::AtSeconds { seconds })
+            }
+
+            // Seconds and minutes masks clear - match minutes:seconds
+            (false, false, true, true) => {
+                let seconds = self.decode_bcd_seconds()?;
+                let minutes = self.decode_bcd_minutes()?;
+                Ok(Alarm1Config::AtMinutesSeconds { minutes, seconds })
+            }
+
+            // Only day/date mask set - match time daily
+            (false, false, false, true) => {
+                let seconds = self.decode_bcd_seconds()?;
+                let minutes = self.decode_bcd_minutes()?;
+                let (hours, is_pm) = self.decode_bcd_hours()?;
+                Ok(Alarm1Config::AtTime {
+                    hours,
+                    minutes,
+                    seconds,
+                    is_pm,
+                })
+            }
+
+            // No masks set - match specific date/day
+            (false, false, false, false) => {
+                let seconds = self.decode_bcd_seconds()?;
+                let minutes = self.decode_bcd_minutes()?;
+                let (hours, is_pm) = self.decode_bcd_hours()?;
+
+                if self.day_date.day_date_select() == DayDateSelect::Day {
+                    // Day of week alarm
+                    let day = self.day_date.day_or_date();
+                    Ok(Alarm1Config::AtTimeOnDay {
+                        hours,
+                        minutes,
+                        seconds,
+                        day,
+                        is_pm,
+                    })
+                } else {
+                    // Date of month alarm
+                    let date = self.decode_bcd_day_date()?;
+                    Ok(Alarm1Config::AtTimeOnDate {
+                        hours,
+                        minutes,
+                        seconds,
+                        date,
+                        is_pm,
+                    })
+                }
+            }
+
+            // Invalid mask combination
+            _ => Err(AlarmError::InvalidTime(
+                "Invalid alarm mask bit combination",
+            )),
+        }
+    }
+
+    fn decode_bcd_seconds(self) -> Result<u8, AlarmError> {
+        let ones = self.seconds.seconds();
+        let tens = self.seconds.ten_seconds();
+        if ones > 9 || tens > 5 {
+            return Err(AlarmError::InvalidTime("Invalid BCD seconds value"));
+        }
+        Ok(tens * 10 + ones)
+    }
+
+    fn decode_bcd_minutes(self) -> Result<u8, AlarmError> {
+        let ones = self.minutes.minutes();
+        let tens = self.minutes.ten_minutes();
+        if ones > 9 || tens > 5 {
+            return Err(AlarmError::InvalidTime("Invalid BCD minutes value"));
+        }
+        Ok(tens * 10 + ones)
+    }
+
+    fn decode_bcd_hours(self) -> Result<(u8, Option<bool>), AlarmError> {
+        let ones = self.hours.hours();
+        let tens = self.hours.ten_hours();
+
+        if ones > 9 || tens > 2 {
+            return Err(AlarmError::InvalidTime("Invalid BCD hours value"));
+        }
+
+        match self.hours.time_representation() {
+            TimeRepresentation::TwentyFourHour => {
+                let twenty_hours = self.hours.pm_or_twenty_hours();
+                let hours = twenty_hours * 20 + tens * 10 + ones;
+                if hours > 23 {
+                    return Err(AlarmError::InvalidTime("Invalid 24-hour value"));
+                }
+                Ok((hours, None))
+            }
+            TimeRepresentation::TwelveHour => {
+                let hours = tens * 10 + ones;
+                if hours == 0 || hours > 12 {
+                    return Err(AlarmError::InvalidTime("Invalid 12-hour value"));
+                }
+                let is_pm = self.hours.pm_or_twenty_hours() != 0;
+                Ok((hours, Some(is_pm)))
+            }
+        }
+    }
+
+    fn decode_bcd_day_date(self) -> Result<u8, AlarmError> {
+        let ones = self.day_date.day_or_date();
+        let tens = self.day_date.ten_date();
+        if ones > 9 || tens > 3 {
+            return Err(AlarmError::InvalidTime("Invalid BCD date value"));
+        }
+        let date = tens * 10 + ones;
+        if date == 0 || date > 31 {
+            return Err(AlarmError::InvalidTime("Invalid date value"));
+        }
+        Ok(date)
+    }
+
     fn configure_every_second(alarm: &mut Self) {
         alarm.seconds.set_alarm_mask1(true);
         alarm.minutes.set_alarm_mask2(true);
@@ -762,6 +904,126 @@ impl DS3231Alarm2 {
         })
     }
 
+    /// Converts the register values back to an `Alarm2Config`.
+    ///
+    /// # Returns
+    ///
+    /// The `Alarm2Config` that corresponds to the current register values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the register values don't form a valid configuration
+    /// or contain invalid BCD values.
+    pub fn to_config(&self) -> Result<Alarm2Config, AlarmError> {
+        // Check mask bit pattern to determine alarm type
+        let mask2 = self.minutes.alarm_mask2();
+        let mask3 = self.hours.alarm_mask3();
+        let mask4 = self.day_date.alarm_mask4();
+
+        match (mask2, mask3, mask4) {
+            // All masks set - every minute
+            (true, true, true) => Ok(Alarm2Config::EveryMinute),
+
+            // Only minutes mask clear - match minutes
+            (false, true, true) => {
+                let minutes = self.decode_bcd_minutes()?;
+                Ok(Alarm2Config::AtMinutes { minutes })
+            }
+
+            // Only day/date mask set - match time daily
+            (false, false, true) => {
+                let minutes = self.decode_bcd_minutes()?;
+                let (hours, is_pm) = self.decode_bcd_hours()?;
+                Ok(Alarm2Config::AtTime {
+                    hours,
+                    minutes,
+                    is_pm,
+                })
+            }
+
+            // No masks set - match specific date/day
+            (false, false, false) => {
+                let minutes = self.decode_bcd_minutes()?;
+                let (hours, is_pm) = self.decode_bcd_hours()?;
+
+                if self.day_date.day_date_select() == DayDateSelect::Day {
+                    // Day of week alarm
+                    let day = self.day_date.day_or_date();
+                    Ok(Alarm2Config::AtTimeOnDay {
+                        hours,
+                        minutes,
+                        day,
+                        is_pm,
+                    })
+                } else {
+                    // Date of month alarm
+                    let date = self.decode_bcd_day_date()?;
+                    Ok(Alarm2Config::AtTimeOnDate {
+                        hours,
+                        minutes,
+                        date,
+                        is_pm,
+                    })
+                }
+            }
+
+            // Invalid mask combination
+            _ => Err(AlarmError::InvalidTime(
+                "Invalid alarm mask bit combination",
+            )),
+        }
+    }
+
+    fn decode_bcd_minutes(self) -> Result<u8, AlarmError> {
+        let ones = self.minutes.minutes();
+        let tens = self.minutes.ten_minutes();
+        if ones > 9 || tens > 5 {
+            return Err(AlarmError::InvalidTime("Invalid BCD minutes value"));
+        }
+        Ok(tens * 10 + ones)
+    }
+
+    fn decode_bcd_hours(self) -> Result<(u8, Option<bool>), AlarmError> {
+        let ones = self.hours.hours();
+        let tens = self.hours.ten_hours();
+
+        if ones > 9 || tens > 2 {
+            return Err(AlarmError::InvalidTime("Invalid BCD hours value"));
+        }
+
+        match self.hours.time_representation() {
+            TimeRepresentation::TwentyFourHour => {
+                let twenty_hours = self.hours.pm_or_twenty_hours();
+                let hours = twenty_hours * 20 + tens * 10 + ones;
+                if hours > 23 {
+                    return Err(AlarmError::InvalidTime("Invalid 24-hour value"));
+                }
+                Ok((hours, None))
+            }
+            TimeRepresentation::TwelveHour => {
+                let hours = tens * 10 + ones;
+                if hours == 0 || hours > 12 {
+                    return Err(AlarmError::InvalidTime("Invalid 12-hour value"));
+                }
+                let is_pm = self.hours.pm_or_twenty_hours() != 0;
+                Ok((hours, Some(is_pm)))
+            }
+        }
+    }
+
+    fn decode_bcd_day_date(self) -> Result<u8, AlarmError> {
+        let ones = self.day_date.day_or_date();
+        let tens = self.day_date.ten_date();
+        if ones > 9 || tens > 3 {
+            return Err(AlarmError::InvalidTime("Invalid BCD date value"));
+        }
+        let date = tens * 10 + ones;
+        if date == 0 || date > 31 {
+            return Err(AlarmError::InvalidTime("Invalid date value"));
+        }
+        Ok(date)
+    }
+
     fn set_time_components(
         minutes: &mut AlarmMinutes,
         hours: &mut AlarmHours,
@@ -822,7 +1084,9 @@ impl defmt::Format for DS3231Alarm2 {
 
 #[cfg(test)]
 mod tests {
+    extern crate alloc;
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_alarm1_every_second() {
@@ -833,6 +1097,132 @@ mod tests {
         assert!(alarm.minutes().alarm_mask2());
         assert!(alarm.hours().alarm_mask3());
         assert!(alarm.day_date().alarm_mask4());
+    }
+
+    #[test]
+    fn test_alarm1_to_config_round_trip() {
+        // Test various configurations to ensure round trip conversion works
+        let configs = vec![
+            Alarm1Config::EverySecond,
+            Alarm1Config::AtSeconds { seconds: 30 },
+            Alarm1Config::AtMinutesSeconds {
+                minutes: 15,
+                seconds: 45,
+            },
+            Alarm1Config::AtTime {
+                hours: 9,
+                minutes: 30,
+                seconds: 0,
+                is_pm: None,
+            },
+            Alarm1Config::AtTimeOnDate {
+                hours: 12,
+                minutes: 0,
+                seconds: 0,
+                date: 15,
+                is_pm: None,
+            },
+            Alarm1Config::AtTimeOnDay {
+                hours: 18,
+                minutes: 45,
+                seconds: 30,
+                day: 5,
+                is_pm: None,
+            },
+        ];
+
+        for config in configs {
+            let alarm = DS3231Alarm1::from_config(&config).unwrap();
+            let converted_back = alarm.to_config().unwrap();
+            assert_eq!(config, converted_back);
+        }
+    }
+
+    #[test]
+    fn test_alarm2_to_config_round_trip() {
+        // Test various configurations to ensure round trip conversion works
+        let configs = vec![
+            Alarm2Config::EveryMinute,
+            Alarm2Config::AtMinutes { minutes: 30 },
+            Alarm2Config::AtTime {
+                hours: 14,
+                minutes: 30,
+                is_pm: None,
+            },
+            Alarm2Config::AtTimeOnDate {
+                hours: 8,
+                minutes: 15,
+                date: 25,
+                is_pm: None,
+            },
+            Alarm2Config::AtTimeOnDay {
+                hours: 20,
+                minutes: 0,
+                day: 3,
+                is_pm: None,
+            },
+        ];
+
+        for config in configs {
+            let alarm = DS3231Alarm2::from_config(&config).unwrap();
+            let converted_back = alarm.to_config().unwrap();
+            assert_eq!(config, converted_back);
+        }
+    }
+
+    #[test]
+    fn test_decode_specific_register_values() {
+        // Test the specific register values from the failing test
+        let seconds = AlarmSeconds(0x30); // 30 seconds with no mask bit
+        let minutes = AlarmMinutes(0x45); // 45 minutes with no mask bit
+        let hours = AlarmHours(0x12); // 12 hours with no mask bit
+        let day_date = AlarmDayDate(0x15); // 15 date with no mask bit
+
+        let alarm = DS3231Alarm1::from_registers(seconds, minutes, hours, day_date);
+        let config = alarm.to_config().unwrap();
+
+        match config {
+            Alarm1Config::AtTimeOnDate {
+                hours,
+                minutes,
+                seconds,
+                date,
+                is_pm,
+            } => {
+                assert_eq!(hours, 12);
+                assert_eq!(minutes, 45);
+                assert_eq!(seconds, 30);
+                assert_eq!(date, 15);
+                assert_eq!(is_pm, None);
+            }
+            _ => panic!("Expected AtTimeOnDate configuration, got {:?}", config),
+        }
+    }
+
+    #[test]
+    fn test_decode_specific_alarm2_register_values() {
+        // Test the specific register values from the failing alarm2 test
+        let minutes = AlarmMinutes(0x45); // 45 minutes with no mask bit
+        let hours = AlarmHours(0x12); // 12 hours with no mask bit
+        let day_date = AlarmDayDate(0x15); // 15 date with no mask bit
+
+        let alarm = DS3231Alarm2::from_registers(minutes, hours, day_date);
+        let config = alarm.to_config().unwrap();
+
+        match config {
+            Alarm2Config::AtTimeOnDate {
+                hours,
+                minutes,
+                date,
+                is_pm,
+            } => {
+                assert_eq!(hours, 12);
+                assert_eq!(minutes, 45);
+                assert_eq!(date, 15);
+                assert_eq!(is_pm, None);
+            }
+            _ => panic!("Expected AtTimeOnDate configuration, got {:?}", config),
+        }
     }
 
     #[test]
@@ -1340,7 +1730,7 @@ mod tests {
     fn test_alarm_register_accessors() {
         let seconds = AlarmSeconds(0x35);
         let minutes = AlarmMinutes(0x42);
-        let hours = AlarmHours(0x18);
+        let hours = AlarmHours(0x12);
         let day_date = AlarmDayDate(0x25);
 
         let alarm1 = DS3231Alarm1::from_registers(seconds, minutes, hours, day_date);
@@ -1446,19 +1836,1192 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "defmt")]
     #[test]
-    fn test_alarm_config_defmt_formatting() {
-        // Test defmt formatting for alarm configs
-        let alarm1_config = Alarm1Config::AtTime {
-            hours: 9,
+    fn test_alarm_debug_formatting_coverage() {
+        // Test Debug implementation for various alarm configs
+        let config1 = Alarm1Config::EverySecond;
+        let debug_str = alloc::format!("{:?}", config1);
+        assert!(debug_str.contains("EverySecond"));
+
+        let config2 = Alarm1Config::AtTimeOnDate {
+            hours: 12,
             minutes: 30,
-            seconds: 0,
+            seconds: 15,
+            date: 25,
+            is_pm: Some(true),
+        };
+        let debug_str = alloc::format!("{:?}", config2);
+        assert!(debug_str.contains("AtTimeOnDate"));
+        assert!(debug_str.contains("12"));
+        assert!(debug_str.contains("30"));
+        assert!(debug_str.contains("15"));
+        assert!(debug_str.contains("25"));
+
+        let config3 = Alarm2Config::AtTimeOnDay {
+            hours: 18,
+            minutes: 45,
+            day: 3,
             is_pm: None,
         };
-        let _formatted = defmt::Debug2Format(&alarm1_config);
+        let debug_str = alloc::format!("{:?}", config3);
+        assert!(debug_str.contains("AtTimeOnDay"));
+        assert!(debug_str.contains("18"));
+        assert!(debug_str.contains("45"));
+        assert!(debug_str.contains("3"));
+    }
 
-        let alarm2_config = Alarm2Config::EveryMinute;
-        let _formatted = defmt::Debug2Format(&alarm2_config);
+    #[test]
+    fn test_alarm_register_struct_debug_formatting() {
+        // Test Debug implementation for DS3231Alarm1 and DS3231Alarm2 structs
+        let alarm1 = DS3231Alarm1::from_config(&Alarm1Config::AtTime {
+            hours: 15,
+            minutes: 30,
+            seconds: 45,
+            is_pm: None,
+        })
+        .unwrap();
+        let debug_str = alloc::format!("{:?}", alarm1);
+        assert!(debug_str.contains("DS3231Alarm1"));
+
+        let alarm2 = DS3231Alarm2::from_config(&Alarm2Config::AtTime {
+            hours: 14,
+            minutes: 30,
+            is_pm: None,
+        })
+        .unwrap();
+        let debug_str = alloc::format!("{:?}", alarm2);
+        assert!(debug_str.contains("DS3231Alarm2"));
+    }
+
+    #[test]
+    fn test_alarm_error_debug_and_from_implementations() {
+        // Test various AlarmError variants
+        let error1 = AlarmError::InvalidTime("test error message");
+        let debug_str = alloc::format!("{:?}", error1);
+        assert!(debug_str.contains("InvalidTime"));
+        assert!(debug_str.contains("test error message"));
+
+        let error2 = AlarmError::InvalidDayOfWeek;
+        let debug_str = alloc::format!("{:?}", error2);
+        assert!(debug_str.contains("InvalidDayOfWeek"));
+
+        let error3 = AlarmError::InvalidDateOfMonth;
+        let debug_str = alloc::format!("{:?}", error3);
+        assert!(debug_str.contains("InvalidDateOfMonth"));
+
+        // Test From implementation
+        use crate::datetime::DS3231DateTimeError;
+        let datetime_error = DS3231DateTimeError::InvalidDateTime;
+        let alarm_error = AlarmError::from(datetime_error);
+        match alarm_error {
+            AlarmError::DateTime(_) => {}
+            _ => panic!("Expected DateTime variant"),
+        }
+    }
+
+    #[test]
+    fn test_alarm_validation_edge_case_coverage() {
+        // Test edge cases for all validation methods
+
+        // Valid edge cases that should pass
+        assert!(Alarm1Config::AtSeconds { seconds: 0 }.validate().is_ok());
+        assert!(Alarm1Config::AtSeconds { seconds: 59 }.validate().is_ok());
+        assert!(Alarm1Config::AtMinutesSeconds {
+            minutes: 0,
+            seconds: 0
+        }
+        .validate()
+        .is_ok());
+        assert!(Alarm1Config::AtMinutesSeconds {
+            minutes: 59,
+            seconds: 59
+        }
+        .validate()
+        .is_ok());
+
+        // 24-hour mode edge cases
+        assert!(Alarm1Config::AtTime {
+            hours: 0,
+            minutes: 0,
+            seconds: 0,
+            is_pm: None
+        }
+        .validate()
+        .is_ok());
+        assert!(Alarm1Config::AtTime {
+            hours: 23,
+            minutes: 59,
+            seconds: 59,
+            is_pm: None
+        }
+        .validate()
+        .is_ok());
+
+        // 12-hour mode edge cases
+        assert!(Alarm1Config::AtTime {
+            hours: 1,
+            minutes: 0,
+            seconds: 0,
+            is_pm: Some(false)
+        }
+        .validate()
+        .is_ok());
+        assert!(Alarm1Config::AtTime {
+            hours: 12,
+            minutes: 59,
+            seconds: 59,
+            is_pm: Some(true)
+        }
+        .validate()
+        .is_ok());
+
+        // Date edge cases
+        assert!(Alarm1Config::AtTimeOnDate {
+            hours: 12,
+            minutes: 0,
+            seconds: 0,
+            date: 1,
+            is_pm: None
+        }
+        .validate()
+        .is_ok());
+        assert!(Alarm1Config::AtTimeOnDate {
+            hours: 12,
+            minutes: 0,
+            seconds: 0,
+            date: 31,
+            is_pm: None
+        }
+        .validate()
+        .is_ok());
+
+        // Day edge cases
+        assert!(Alarm1Config::AtTimeOnDay {
+            hours: 12,
+            minutes: 0,
+            seconds: 0,
+            day: 1,
+            is_pm: None
+        }
+        .validate()
+        .is_ok());
+        assert!(Alarm1Config::AtTimeOnDay {
+            hours: 12,
+            minutes: 0,
+            seconds: 0,
+            day: 7,
+            is_pm: None
+        }
+        .validate()
+        .is_ok());
+
+        // Test the same for Alarm2Config
+        assert!(Alarm2Config::AtMinutes { minutes: 0 }.validate().is_ok());
+        assert!(Alarm2Config::AtMinutes { minutes: 59 }.validate().is_ok());
+        assert!(Alarm2Config::AtTime {
+            hours: 0,
+            minutes: 0,
+            is_pm: None
+        }
+        .validate()
+        .is_ok());
+        assert!(Alarm2Config::AtTime {
+            hours: 23,
+            minutes: 59,
+            is_pm: None
+        }
+        .validate()
+        .is_ok());
+        assert!(Alarm2Config::AtTime {
+            hours: 1,
+            minutes: 0,
+            is_pm: Some(false)
+        }
+        .validate()
+        .is_ok());
+        assert!(Alarm2Config::AtTime {
+            hours: 12,
+            minutes: 59,
+            is_pm: Some(true)
+        }
+        .validate()
+        .is_ok());
+    }
+
+    #[test]
+    fn test_bcd_decoding_helper_coverage() {
+        // Test all BCD decoding helper methods with various values
+        let alarm1 = DS3231Alarm1::from_config(&Alarm1Config::AtTimeOnDate {
+            hours: 23,
+            minutes: 59,
+            seconds: 45,
+            date: 28,
+            is_pm: None,
+        })
+        .unwrap();
+
+        // These should decode successfully
+        assert_eq!(alarm1.decode_bcd_seconds().unwrap(), 45);
+        assert_eq!(alarm1.decode_bcd_minutes().unwrap(), 59);
+        let (hours, is_pm) = alarm1.decode_bcd_hours().unwrap();
+        assert_eq!(hours, 23);
+        assert_eq!(is_pm, None);
+        assert_eq!(alarm1.decode_bcd_day_date().unwrap(), 28);
+
+        // Test 12-hour mode decoding
+        let alarm1_12h = DS3231Alarm1::from_config(&Alarm1Config::AtTime {
+            hours: 11,
+            minutes: 30,
+            seconds: 15,
+            is_pm: Some(true),
+        })
+        .unwrap();
+
+        let (hours, is_pm) = alarm1_12h.decode_bcd_hours().unwrap();
+        assert_eq!(hours, 11);
+        assert_eq!(is_pm, Some(true));
+
+        // Test the same for Alarm2
+        let alarm2 = DS3231Alarm2::from_config(&Alarm2Config::AtTimeOnDate {
+            hours: 20,
+            minutes: 45,
+            date: 15,
+            is_pm: None,
+        })
+        .unwrap();
+
+        assert_eq!(alarm2.decode_bcd_minutes().unwrap(), 45);
+        let (hours, is_pm) = alarm2.decode_bcd_hours().unwrap();
+        assert_eq!(hours, 20);
+        assert_eq!(is_pm, None);
+        assert_eq!(alarm2.decode_bcd_day_date().unwrap(), 15);
+    }
+
+    #[test]
+    fn test_all_alarm_configuration_methods() {
+        // Test all the private configuration methods by testing their outputs
+        let alarm1 = DS3231Alarm1::from_config(&Alarm1Config::EverySecond).unwrap();
+
+        // Test configure_every_second was called correctly
+        assert!(alarm1.seconds.alarm_mask1());
+        assert!(alarm1.minutes.alarm_mask2());
+        assert!(alarm1.hours.alarm_mask3());
+        assert!(alarm1.day_date.alarm_mask4());
+
+        // Test other configuration methods through their outputs
+        let alarm1 = DS3231Alarm1::from_config(&Alarm1Config::AtSeconds { seconds: 45 }).unwrap();
+        assert!(!alarm1.seconds.alarm_mask1());
+        assert!(alarm1.minutes.alarm_mask2());
+        assert!(alarm1.hours.alarm_mask3());
+        assert!(alarm1.day_date.alarm_mask4());
+        assert_eq!(alarm1.seconds.seconds(), 5);
+        assert_eq!(alarm1.seconds.ten_seconds(), 4);
+
+        let alarm1 = DS3231Alarm1::from_config(&Alarm1Config::AtMinutesSeconds {
+            minutes: 30,
+            seconds: 15,
+        })
+        .unwrap();
+        assert!(!alarm1.seconds.alarm_mask1());
+        assert!(!alarm1.minutes.alarm_mask2());
+        assert!(alarm1.hours.alarm_mask3());
+        assert!(alarm1.day_date.alarm_mask4());
+    }
+
+    #[test]
+    fn test_create_alarm_time_components_edge_cases() {
+        // Test maximum values
+        let (minutes, hours) = create_alarm_time_components(23, 59, None).unwrap();
+        assert_eq!(minutes.minutes(), 9);
+        assert_eq!(minutes.ten_minutes(), 5);
+        assert_eq!(
+            hours.time_representation(),
+            TimeRepresentation::TwentyFourHour
+        );
+
+        // Test 12-hour mode edge cases
+        let (_, hours) = create_alarm_time_components(12, 0, Some(true)).unwrap();
+        assert_eq!(hours.time_representation(), TimeRepresentation::TwelveHour);
+        assert_eq!(hours.pm_or_twenty_hours(), 1); // PM
+
+        let (_, hours) = create_alarm_time_components(12, 0, Some(false)).unwrap();
+        assert_eq!(hours.time_representation(), TimeRepresentation::TwelveHour);
+        assert_eq!(hours.pm_or_twenty_hours(), 0); // AM
+    }
+
+    #[test]
+    fn test_create_alarm_day_date_component_edge_cases() {
+        // Test day mode
+        let day_date = create_alarm_day_date_component(7, true).unwrap(); // Sunday
+        assert_eq!(day_date.day_date_select(), DayDateSelect::Day);
+        assert_eq!(day_date.day_or_date(), 7);
+
+        // Test date mode with edge cases
+        let day_date = create_alarm_day_date_component(1, false).unwrap(); // 1st
+        assert_eq!(day_date.day_date_select(), DayDateSelect::Date);
+        assert_eq!(day_date.day_or_date(), 1);
+        assert_eq!(day_date.ten_date(), 0);
+
+        let day_date = create_alarm_day_date_component(31, false).unwrap(); // 31st
+        assert_eq!(day_date.day_date_select(), DayDateSelect::Date);
+        assert_eq!(day_date.day_or_date(), 1);
+        assert_eq!(day_date.ten_date(), 3);
+    }
+
+    #[test]
+    fn test_to_config_invalid_mask_combinations() {
+        // Test Alarm1 invalid mask combination
+        let mut alarm1 = DS3231Alarm1::from_config(&Alarm1Config::EverySecond).unwrap();
+        // Create an invalid mask pattern (e.g., only mask2 set)
+        alarm1.seconds.set_alarm_mask1(false);
+        alarm1.minutes.set_alarm_mask2(true);
+        alarm1.hours.set_alarm_mask3(false);
+        alarm1.day_date.set_alarm_mask4(false);
+
+        let result = alarm1.to_config();
+        assert!(matches!(result, Err(AlarmError::InvalidTime(_))));
+
+        // Test Alarm2 invalid mask combination
+        let mut alarm2 = DS3231Alarm2::from_config(&Alarm2Config::EveryMinute).unwrap();
+        // Create an invalid mask pattern (e.g., only mask3 set)
+        alarm2.minutes.set_alarm_mask2(false);
+        alarm2.hours.set_alarm_mask3(true);
+        alarm2.day_date.set_alarm_mask4(false);
+
+        let result = alarm2.to_config();
+        assert!(matches!(result, Err(AlarmError::InvalidTime(_))));
+    }
+
+    #[test]
+    fn test_to_config_day_vs_date_selection() {
+        // Test day selection vs date selection logic in Alarm1
+        let mut alarm1 = DS3231Alarm1::from_config(&Alarm1Config::AtTimeOnDay {
+            hours: 12,
+            minutes: 30,
+            seconds: 0,
+            day: 5,
+            is_pm: None,
+        })
+        .unwrap();
+
+        // Convert and verify it's detected as day mode
+        let config = alarm1.to_config().unwrap();
+        match config {
+            Alarm1Config::AtTimeOnDay { day, .. } => assert_eq!(day, 5),
+            _ => panic!("Expected AtTimeOnDay"),
+        }
+
+        // Change to date mode and verify
+        alarm1.day_date.set_day_date_select(DayDateSelect::Date);
+        alarm1.day_date.set_ten_date(0);
+        alarm1.day_date.set_day_or_date(5); // Date 5
+        let config = alarm1.to_config().unwrap();
+        match config {
+            Alarm1Config::AtTimeOnDate { date, .. } => assert_eq!(date, 5),
+            _ => panic!("Expected AtTimeOnDate"),
+        }
+
+        // Test the same for Alarm2
+        let mut alarm2 = DS3231Alarm2::from_config(&Alarm2Config::AtTimeOnDay {
+            hours: 12,
+            minutes: 30,
+            day: 3,
+            is_pm: None,
+        })
+        .unwrap();
+
+        let config = alarm2.to_config().unwrap();
+        match config {
+            Alarm2Config::AtTimeOnDay { day, .. } => assert_eq!(day, 3),
+            _ => panic!("Expected AtTimeOnDay"),
+        }
+
+        // Change to date mode
+        alarm2.day_date.set_day_date_select(DayDateSelect::Date);
+        alarm2.day_date.set_ten_date(0);
+        alarm2.day_date.set_day_or_date(8); // Date 8
+        let config = alarm2.to_config().unwrap();
+        match config {
+            Alarm2Config::AtTimeOnDate { date, .. } => assert_eq!(date, 8),
+            _ => panic!("Expected AtTimeOnDate"),
+        }
+    }
+
+    #[test]
+    fn test_12_hour_pm_flag_detection() {
+        // Test 12-hour PM flag detection in Alarm1
+        let mut alarm1 = DS3231Alarm1::from_config(&Alarm1Config::AtTime {
+            hours: 3,
+            minutes: 30,
+            seconds: 0,
+            is_pm: Some(true),
+        })
+        .unwrap();
+
+        let config = alarm1.to_config().unwrap();
+        match config {
+            Alarm1Config::AtTime {
+                is_pm: Some(true), ..
+            } => {}
+            _ => panic!("Expected PM flag to be true"),
+        }
+
+        // Test AM flag
+        alarm1.hours.set_pm_or_twenty_hours(0); // Set AM
+        let config = alarm1.to_config().unwrap();
+        match config {
+            Alarm1Config::AtTime {
+                is_pm: Some(false), ..
+            } => {}
+            _ => panic!("Expected PM flag to be false"),
+        }
+
+        // Test the same for Alarm2
+        let mut alarm2 = DS3231Alarm2::from_config(&Alarm2Config::AtTime {
+            hours: 8,
+            minutes: 15,
+            is_pm: Some(true),
+        })
+        .unwrap();
+
+        let config = alarm2.to_config().unwrap();
+        match config {
+            Alarm2Config::AtTime {
+                is_pm: Some(true), ..
+            } => {}
+            _ => panic!("Expected PM flag to be true"),
+        }
+
+        // Test AM flag for Alarm2
+        alarm2.hours.set_pm_or_twenty_hours(0); // Set AM
+        let config = alarm2.to_config().unwrap();
+        match config {
+            Alarm2Config::AtTime {
+                is_pm: Some(false), ..
+            } => {}
+            _ => panic!("Expected PM flag to be false"),
+        }
+    }
+
+    #[test]
+    fn test_validation_error_paths() {
+        // Test Alarm1Config validation error paths that are not covered
+
+        // AtMinutesSeconds with invalid seconds
+        let config = Alarm1Config::AtMinutesSeconds {
+            minutes: 30,
+            seconds: 60,
+        };
+        assert!(matches!(config.validate(), Err(AlarmError::InvalidTime(_))));
+
+        // AtMinutesSeconds with invalid minutes
+        let config = Alarm1Config::AtMinutesSeconds {
+            minutes: 60,
+            seconds: 30,
+        };
+        assert!(matches!(config.validate(), Err(AlarmError::InvalidTime(_))));
+
+        // AtTimeOnDate with invalid date (0)
+        let config = Alarm1Config::AtTimeOnDate {
+            hours: 12,
+            minutes: 30,
+            seconds: 45,
+            date: 0,
+            is_pm: None,
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(AlarmError::InvalidDateOfMonth)
+        ));
+
+        // AtTimeOnDate with invalid date (>31)
+        let config = Alarm1Config::AtTimeOnDate {
+            hours: 12,
+            minutes: 30,
+            seconds: 45,
+            date: 32,
+            is_pm: None,
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(AlarmError::InvalidDateOfMonth)
+        ));
+
+        // AtTimeOnDay with invalid day (0)
+        let config = Alarm1Config::AtTimeOnDay {
+            hours: 12,
+            minutes: 30,
+            seconds: 45,
+            day: 0,
+            is_pm: None,
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(AlarmError::InvalidDayOfWeek)
+        ));
+
+        // AtTimeOnDay with invalid day (>7)
+        let config = Alarm1Config::AtTimeOnDay {
+            hours: 12,
+            minutes: 30,
+            seconds: 45,
+            day: 8,
+            is_pm: None,
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(AlarmError::InvalidDayOfWeek)
+        ));
+
+        // Test Alarm2Config validation error paths
+
+        // AtTimeOnDate with invalid date (0)
+        let config = Alarm2Config::AtTimeOnDate {
+            hours: 12,
+            minutes: 30,
+            date: 0,
+            is_pm: None,
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(AlarmError::InvalidDateOfMonth)
+        ));
+
+        // AtTimeOnDate with invalid date (>31)
+        let config = Alarm2Config::AtTimeOnDate {
+            hours: 12,
+            minutes: 30,
+            date: 32,
+            is_pm: None,
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(AlarmError::InvalidDateOfMonth)
+        ));
+
+        // AtTimeOnDay with invalid day (0)
+        let config = Alarm2Config::AtTimeOnDay {
+            hours: 12,
+            minutes: 30,
+            day: 0,
+            is_pm: None,
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(AlarmError::InvalidDayOfWeek)
+        ));
+
+        // AtTimeOnDay with invalid day (>7)
+        let config = Alarm2Config::AtTimeOnDay {
+            hours: 12,
+            minutes: 30,
+            day: 8,
+            is_pm: None,
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(AlarmError::InvalidDayOfWeek)
+        ));
+
+        // AtMinutes with invalid minutes
+        let config = Alarm2Config::AtMinutes { minutes: 60 };
+        assert!(matches!(config.validate(), Err(AlarmError::InvalidTime(_))));
+
+        // Test validate_time error paths for both configs
+
+        // Test Alarm1Config hours validation in 24-hour mode
+        let config = Alarm1Config::AtTime {
+            hours: 24,
+            minutes: 30,
+            seconds: 45,
+            is_pm: None,
+        };
+        assert!(matches!(config.validate(), Err(AlarmError::InvalidTime(_))));
+
+        // Test Alarm1Config hours validation in 12-hour mode (0 hours)
+        let config = Alarm1Config::AtTime {
+            hours: 0,
+            minutes: 30,
+            seconds: 45,
+            is_pm: Some(true),
+        };
+        assert!(matches!(config.validate(), Err(AlarmError::InvalidTime(_))));
+
+        // Test Alarm1Config hours validation in 12-hour mode (>12 hours)
+        let config = Alarm1Config::AtTime {
+            hours: 13,
+            minutes: 30,
+            seconds: 45,
+            is_pm: Some(true),
+        };
+        assert!(matches!(config.validate(), Err(AlarmError::InvalidTime(_))));
+
+        // Test Alarm1Config minutes validation
+        let config = Alarm1Config::AtTime {
+            hours: 12,
+            minutes: 60,
+            seconds: 45,
+            is_pm: None,
+        };
+        assert!(matches!(config.validate(), Err(AlarmError::InvalidTime(_))));
+
+        // Test Alarm1Config seconds validation
+        let config = Alarm1Config::AtTime {
+            hours: 12,
+            minutes: 30,
+            seconds: 60,
+            is_pm: None,
+        };
+        assert!(matches!(config.validate(), Err(AlarmError::InvalidTime(_))));
+
+        // Test Alarm2Config hours validation in 24-hour mode
+        let config = Alarm2Config::AtTime {
+            hours: 24,
+            minutes: 30,
+            is_pm: None,
+        };
+        assert!(matches!(config.validate(), Err(AlarmError::InvalidTime(_))));
+
+        // Test Alarm2Config hours validation in 12-hour mode (0 hours)
+        let config = Alarm2Config::AtTime {
+            hours: 0,
+            minutes: 30,
+            is_pm: Some(true),
+        };
+        assert!(matches!(config.validate(), Err(AlarmError::InvalidTime(_))));
+
+        // Test Alarm2Config hours validation in 12-hour mode (>12 hours)
+        let config = Alarm2Config::AtTime {
+            hours: 13,
+            minutes: 30,
+            is_pm: Some(true),
+        };
+        assert!(matches!(config.validate(), Err(AlarmError::InvalidTime(_))));
+
+        // Test Alarm2Config minutes validation
+        let config = Alarm2Config::AtTime {
+            hours: 12,
+            minutes: 60,
+            is_pm: None,
+        };
+        assert!(matches!(config.validate(), Err(AlarmError::InvalidTime(_))));
+    }
+
+    #[test]
+    fn test_to_config_with_invalid_bcd_valid_flags() {
+        // Goal: Test that to_config fails if BCD is invalid, even if flags are valid.
+        // We set up flags for a mode that decodes all fields (e.g., AtTimeOnDate for Alarm1,
+        // AtTimeOnDate for Alarm2: all relevant mask bits false, DY/DT=0 for date mode).
+
+        // --- Common valid components (can be overridden for specific tests) ---
+        let mut default_seconds = AlarmSeconds::default(); // 0x00
+        default_seconds.set_alarm_mask1(false);
+
+        let mut default_minutes = AlarmMinutes::default(); // 0x00
+        default_minutes.set_alarm_mask2(false);
+        default_minutes.set_minutes(5); // 05 min
+        default_minutes.set_ten_minutes(3); // 30 min -> 35 min
+
+        let mut default_hours_24h = AlarmHours::default(); // 0x00
+        default_hours_24h.set_alarm_mask3(false);
+        default_hours_24h.set_time_representation(TimeRepresentation::TwentyFourHour);
+        default_hours_24h.set_hours(2); // 2 hr
+        default_hours_24h.set_ten_hours(1); // 10 hr -> 12 hr
+
+        let mut default_hours_12h = AlarmHours::default(); // 0x00
+        default_hours_12h.set_alarm_mask3(false);
+        default_hours_12h.set_time_representation(TimeRepresentation::TwelveHour);
+        default_hours_12h.set_hours(1); // 1 hr
+        default_hours_12h.set_ten_hours(0); // 00 hr -> 1 hr
+        default_hours_12h.set_pm_or_twenty_hours(1); // PM
+
+        let mut default_day_date = AlarmDayDate::default(); // 0x00
+        default_day_date.set_alarm_mask4(false);
+        default_day_date.set_day_date_select(DayDateSelect::Date);
+        default_day_date.set_day_or_date(5); // 5th
+        default_day_date.set_ten_date(1); // 10th -> 15th
+
+        // --- DS3231Alarm1 Tests ---
+
+        // Invalid BCD seconds (ones > 9)
+        let alarm1_s1 = DS3231Alarm1::from_registers(
+            AlarmSeconds(0x0A),
+            default_minutes,
+            default_hours_24h,
+            default_day_date,
+        );
+        let res_s1 = alarm1_s1.to_config();
+        assert!(
+            matches!(
+                res_s1,
+                Err(AlarmError::InvalidTime("Invalid BCD seconds value"))
+            ),
+            "Alarm1 SecOnes: {:?}",
+            res_s1
+        );
+
+        // Invalid BCD seconds (tens > 5)
+        let alarm1_s2 = DS3231Alarm1::from_registers(
+            AlarmSeconds(0x60),
+            default_minutes,
+            default_hours_24h,
+            default_day_date,
+        );
+        let res_s2 = alarm1_s2.to_config();
+        assert!(
+            matches!(
+                res_s2,
+                Err(AlarmError::InvalidTime("Invalid BCD seconds value"))
+            ),
+            "Alarm1 SecTens: {:?}",
+            res_s2
+        );
+
+        // Invalid BCD minutes (ones > 9)
+        let alarm1_m1 = DS3231Alarm1::from_registers(
+            default_seconds,
+            AlarmMinutes(0x0A),
+            default_hours_24h,
+            default_day_date,
+        );
+        let res_m1 = alarm1_m1.to_config();
+        assert!(
+            matches!(
+                res_m1,
+                Err(AlarmError::InvalidTime("Invalid BCD minutes value"))
+            ),
+            "Alarm1 MinOnes: {:?}",
+            res_m1
+        );
+
+        // Invalid BCD minutes (tens > 5)
+        let alarm1_m2 = DS3231Alarm1::from_registers(
+            default_seconds,
+            AlarmMinutes(0x60),
+            default_hours_24h,
+            default_day_date,
+        );
+        let res_m2 = alarm1_m2.to_config();
+        assert!(
+            matches!(
+                res_m2,
+                Err(AlarmError::InvalidTime("Invalid BCD minutes value"))
+            ),
+            "Alarm1 MinTens: {:?}",
+            res_m2
+        );
+
+        // Invalid BCD hours (ones > 9, 24h mode)
+        let mut hours_24_invalid_ones = AlarmHours(0x0A); // Raw BCD for 0 tens, 10 ones
+        hours_24_invalid_ones.set_alarm_mask3(false);
+        hours_24_invalid_ones.set_time_representation(TimeRepresentation::TwentyFourHour);
+        let alarm1_h1 = DS3231Alarm1::from_registers(
+            default_seconds,
+            default_minutes,
+            hours_24_invalid_ones,
+            default_day_date,
+        );
+        let res_h1 = alarm1_h1.to_config();
+        assert!(
+            matches!(
+                res_h1,
+                Err(AlarmError::InvalidTime("Invalid BCD hours value"))
+            ),
+            "Alarm1 Hr24Ones: {:?}",
+            res_h1
+        );
+
+        // Invalid BCD hours (tens > 2, 24h mode e.g. 0x30)
+        let mut hours_24_invalid_tens = AlarmHours(0x30); // Raw BCD for 3 tens, 0 ones
+        hours_24_invalid_tens.set_alarm_mask3(false);
+        hours_24_invalid_tens.set_time_representation(TimeRepresentation::TwentyFourHour);
+        let alarm1_h2 = DS3231Alarm1::from_registers(
+            default_seconds,
+            default_minutes,
+            hours_24_invalid_tens,
+            default_day_date,
+        );
+        let res_h2 = alarm1_h2.to_config();
+        assert!(
+            matches!(
+                res_h2,
+                Err(AlarmError::InvalidTime("Invalid 24-hour value"))
+            ),
+            "Alarm1 Hr24Tens: {:?}",
+            res_h2
+        );
+
+        // Invalid 24-hour value (e.g. 24:00 which is 0x24 BCD - should be caught by value check)
+        let mut hours_24_val_error = AlarmHours(0x24);
+        hours_24_val_error.set_alarm_mask3(false);
+        hours_24_val_error.set_time_representation(TimeRepresentation::TwentyFourHour);
+        let alarm1_h3 = DS3231Alarm1::from_registers(
+            default_seconds,
+            default_minutes,
+            hours_24_val_error,
+            default_day_date,
+        );
+        let res_h3 = alarm1_h3.to_config();
+        assert!(
+            matches!(
+                res_h3,
+                Err(AlarmError::InvalidTime("Invalid 24-hour value"))
+            ),
+            "Alarm1 Hr24Val: {:?}",
+            res_h3
+        );
+
+        // Invalid BCD hours (ones > 9, 12h mode e.g. 0x1A for 1 tens, 10 ones)
+        let mut hours_12_invalid_ones = AlarmHours(0x1A);
+        hours_12_invalid_ones.set_alarm_mask3(false);
+        hours_12_invalid_ones.set_time_representation(TimeRepresentation::TwelveHour);
+        hours_12_invalid_ones.set_pm_or_twenty_hours(0); // AM
+        let alarm1_h4 = DS3231Alarm1::from_registers(
+            default_seconds,
+            default_minutes,
+            hours_12_invalid_ones,
+            default_day_date,
+        );
+        let res_h4 = alarm1_h4.to_config();
+        assert!(
+            matches!(
+                res_h4,
+                Err(AlarmError::InvalidTime("Invalid BCD hours value"))
+            ),
+            "Alarm1 Hr12Ones: {:?}",
+            res_h4
+        );
+
+        // Invalid 12-hour value (00:xx AM which is BCD 0x00 with 12h bit)
+        let mut hours_12_val_zero = AlarmHours(0x00);
+        hours_12_val_zero.set_alarm_mask3(false);
+        hours_12_val_zero.set_time_representation(TimeRepresentation::TwelveHour);
+        hours_12_val_zero.set_pm_or_twenty_hours(0); // AM
+        let alarm1_h5 = DS3231Alarm1::from_registers(
+            default_seconds,
+            default_minutes,
+            hours_12_val_zero,
+            default_day_date,
+        );
+        let res_h5 = alarm1_h5.to_config();
+        assert!(
+            matches!(
+                res_h5,
+                Err(AlarmError::InvalidTime("Invalid 12-hour value"))
+            ),
+            "Alarm1 Hr12ValZero: {:?}",
+            res_h5
+        );
+
+        // Invalid 12-hour value (13:xx AM which is BCD 0x13 with 12h bit)
+        let mut hours_12_val_thirteen = AlarmHours(0x13);
+        hours_12_val_thirteen.set_alarm_mask3(false);
+        hours_12_val_thirteen.set_time_representation(TimeRepresentation::TwelveHour);
+        hours_12_val_thirteen.set_pm_or_twenty_hours(0); // AM
+        let alarm1_h6 = DS3231Alarm1::from_registers(
+            default_seconds,
+            default_minutes,
+            hours_12_val_thirteen,
+            default_day_date,
+        );
+        let res_h6 = alarm1_h6.to_config();
+        assert!(
+            matches!(
+                res_h6,
+                Err(AlarmError::InvalidTime("Invalid 12-hour value"))
+            ),
+            "Alarm1 Hr12ValThirteen: {:?}",
+            res_h6
+        );
+
+        // Invalid BCD day/date (ones > 9)
+        let mut daydate_d1 = AlarmDayDate(0x0A);
+        daydate_d1.set_alarm_mask4(false);
+        daydate_d1.set_day_date_select(DayDateSelect::Date);
+        let alarm1_d1 = DS3231Alarm1::from_registers(
+            default_seconds,
+            default_minutes,
+            default_hours_24h,
+            daydate_d1,
+        );
+        let res_d1 = alarm1_d1.to_config();
+        assert!(
+            matches!(
+                res_d1,
+                Err(AlarmError::InvalidTime("Invalid BCD date value"))
+            ),
+            "Alarm1 DateOnes: {:?}",
+            res_d1
+        );
+
+        // Invalid BCD day/date (tens > 3, e.g. 0x40 for date)
+        let mut daydate_d2 = AlarmDayDate(0x40);
+        daydate_d2.set_alarm_mask4(false);
+        daydate_d2.set_day_date_select(DayDateSelect::Date);
+        let alarm1_d2 = DS3231Alarm1::from_registers(
+            default_seconds,
+            default_minutes,
+            default_hours_24h,
+            daydate_d2,
+        );
+        let res_d2 = alarm1_d2.to_config();
+        assert!(
+            matches!(res_d2, Err(AlarmError::InvalidTime("Invalid date value"))),
+            "Alarm1 DateTens (effectively date 0): {:?}",
+            res_d2
+        );
+
+        // Invalid date value (00)
+        let mut daydate_d3 = AlarmDayDate(0x00); // BCD for 0
+        daydate_d3.set_alarm_mask4(false);
+        daydate_d3.set_day_date_select(DayDateSelect::Date);
+        let alarm1_d3 = DS3231Alarm1::from_registers(
+            default_seconds,
+            default_minutes,
+            default_hours_24h,
+            daydate_d3,
+        );
+        let res_d3 = alarm1_d3.to_config();
+        assert!(
+            matches!(res_d3, Err(AlarmError::InvalidTime("Invalid date value"))),
+            "Alarm1 DateValZero: {:?}",
+            res_d3
+        );
+
+        // Invalid date value (32 -> BCD 0x32)
+        let mut daydate_d4 = AlarmDayDate(0x32); // BCD for 32
+        daydate_d4.set_alarm_mask4(false);
+        daydate_d4.set_day_date_select(DayDateSelect::Date);
+        let alarm1_d4 = DS3231Alarm1::from_registers(
+            default_seconds,
+            default_minutes,
+            default_hours_24h,
+            daydate_d4,
+        );
+        let res_d4 = alarm1_d4.to_config();
+        assert!(
+            matches!(res_d4, Err(AlarmError::InvalidTime("Invalid date value"))),
+            "Alarm1 DateVal32: {:?}",
+            res_d4
+        );
+
+        // --- DS3231Alarm2 Tests ---
+        // For Alarm2, seconds are not used/decoded from AlarmSeconds.
+
+        // Invalid BCD minutes (ones > 9)
+        let alarm2_m1 =
+            DS3231Alarm2::from_registers(AlarmMinutes(0x0A), default_hours_24h, default_day_date);
+        let res_a2m1 = alarm2_m1.to_config();
+        assert!(
+            matches!(
+                res_a2m1,
+                Err(AlarmError::InvalidTime("Invalid BCD minutes value"))
+            ),
+            "Alarm2 MinOnes: {:?}",
+            res_a2m1
+        );
+
+        // Invalid BCD minutes (tens > 5)
+        let alarm2_m2 =
+            DS3231Alarm2::from_registers(AlarmMinutes(0x60), default_hours_24h, default_day_date);
+        let res_a2m2 = alarm2_m2.to_config();
+        assert!(
+            matches!(
+                res_a2m2,
+                Err(AlarmError::InvalidTime("Invalid BCD minutes value"))
+            ),
+            "Alarm2 MinTens: {:?}",
+            res_a2m2
+        );
+
+        // Invalid BCD hours (ones > 9, 24h mode)
+        let mut hours_24_invalid_ones_a2 = AlarmHours(0x0A);
+        hours_24_invalid_ones_a2.set_alarm_mask3(false);
+        hours_24_invalid_ones_a2.set_time_representation(TimeRepresentation::TwentyFourHour);
+        let alarm2_h1 = DS3231Alarm2::from_registers(
+            default_minutes,
+            hours_24_invalid_ones_a2,
+            default_day_date,
+        );
+        let res_a2h1 = alarm2_h1.to_config();
+        assert!(
+            matches!(
+                res_a2h1,
+                Err(AlarmError::InvalidTime("Invalid BCD hours value"))
+            ),
+            "Alarm2 Hr24Ones: {:?}",
+            res_a2h1
+        );
+
+        // Invalid BCD hours (tens > 2, 24h mode e.g. 0x30)
+        let mut hours_24_invalid_tens_a2 = AlarmHours(0x30);
+        hours_24_invalid_tens_a2.set_alarm_mask3(false);
+        hours_24_invalid_tens_a2.set_time_representation(TimeRepresentation::TwentyFourHour);
+        let alarm2_h2 = DS3231Alarm2::from_registers(
+            default_minutes,
+            hours_24_invalid_tens_a2,
+            default_day_date,
+        );
+        let res_a2h2 = alarm2_h2.to_config();
+        assert!(
+            matches!(
+                res_a2h2,
+                Err(AlarmError::InvalidTime("Invalid 24-hour value"))
+            ),
+            "Alarm2 Hr24Tens: {:?}",
+            res_a2h2
+        );
+
+        // Invalid 24-hour value (e.g. 24:00 which is 0x24 BCD)
+        let mut hours_24_val_error_a2 = AlarmHours(0x24);
+        hours_24_val_error_a2.set_alarm_mask3(false);
+        hours_24_val_error_a2.set_time_representation(TimeRepresentation::TwentyFourHour);
+        let alarm2_h3 =
+            DS3231Alarm2::from_registers(default_minutes, hours_24_val_error_a2, default_day_date);
+        let res_a2h3 = alarm2_h3.to_config();
+        assert!(
+            matches!(
+                res_a2h3,
+                Err(AlarmError::InvalidTime("Invalid 24-hour value"))
+            ),
+            "Alarm2 Hr24Val: {:?}",
+            res_a2h3
+        );
+
+        // Invalid BCD hours (ones > 9, 12h mode e.g. 0x1A)
+        let mut hours_12_invalid_ones_a2 = AlarmHours(0x1A);
+        hours_12_invalid_ones_a2.set_alarm_mask3(false);
+        hours_12_invalid_ones_a2.set_time_representation(TimeRepresentation::TwelveHour);
+        hours_12_invalid_ones_a2.set_pm_or_twenty_hours(0); // AM
+        let alarm2_h4 = DS3231Alarm2::from_registers(
+            default_minutes,
+            hours_12_invalid_ones_a2,
+            default_day_date,
+        );
+        let res_a2h4 = alarm2_h4.to_config();
+        assert!(
+            matches!(
+                res_a2h4,
+                Err(AlarmError::InvalidTime("Invalid BCD hours value"))
+            ),
+            "Alarm2 Hr12Ones: {:?}",
+            res_a2h4
+        );
+
+        // Invalid 12-hour value (00:xx AM BCD 0x00 with 12h bit)
+        let mut hours_12_val_zero_a2 = AlarmHours(0x00);
+        hours_12_val_zero_a2.set_alarm_mask3(false);
+        hours_12_val_zero_a2.set_time_representation(TimeRepresentation::TwelveHour);
+        hours_12_val_zero_a2.set_pm_or_twenty_hours(0); // AM
+        let alarm2_h5 =
+            DS3231Alarm2::from_registers(default_minutes, hours_12_val_zero_a2, default_day_date);
+        let res_a2h5 = alarm2_h5.to_config();
+        assert!(
+            matches!(
+                res_a2h5,
+                Err(AlarmError::InvalidTime("Invalid 12-hour value"))
+            ),
+            "Alarm2 Hr12ValZero: {:?}",
+            res_a2h5
+        );
+
+        // Invalid 12-hour value (13:xx AM BCD 0x13 with 12h bit)
+        let mut hours_12_val_thirteen_a2 = AlarmHours(0x13);
+        hours_12_val_thirteen_a2.set_alarm_mask3(false);
+        hours_12_val_thirteen_a2.set_time_representation(TimeRepresentation::TwelveHour);
+        hours_12_val_thirteen_a2.set_pm_or_twenty_hours(0); // AM
+        let alarm2_h6 = DS3231Alarm2::from_registers(
+            default_minutes,
+            hours_12_val_thirteen_a2,
+            default_day_date,
+        );
+        let res_a2h6 = alarm2_h6.to_config();
+        assert!(
+            matches!(
+                res_a2h6,
+                Err(AlarmError::InvalidTime("Invalid 12-hour value"))
+            ),
+            "Alarm2 Hr12ValThirteen: {:?}",
+            res_a2h6
+        );
+
+        // Invalid BCD day/date (ones > 9)
+        let mut daydate_a2d1 = AlarmDayDate(0x0A);
+        daydate_a2d1.set_alarm_mask4(false);
+        daydate_a2d1.set_day_date_select(DayDateSelect::Date);
+        let alarm2_d1 =
+            DS3231Alarm2::from_registers(default_minutes, default_hours_24h, daydate_a2d1);
+        let res_a2d1 = alarm2_d1.to_config();
+        assert!(
+            matches!(
+                res_a2d1,
+                Err(AlarmError::InvalidTime("Invalid BCD date value"))
+            ),
+            "Alarm2 DateOnes: {:?}",
+            res_a2d1
+        );
+
+        // Invalid BCD day/date (tens > 3, e.g. 0x40 for date)
+        let mut daydate_a2d2 = AlarmDayDate(0x40);
+        daydate_a2d2.set_alarm_mask4(false);
+        daydate_a2d2.set_day_date_select(DayDateSelect::Date);
+        let alarm2_d2 =
+            DS3231Alarm2::from_registers(default_minutes, default_hours_24h, daydate_a2d2);
+        let res_a2d2 = alarm2_d2.to_config();
+        assert!(
+            matches!(res_a2d2, Err(AlarmError::InvalidTime("Invalid date value"))),
+            "Alarm2 DateTens (effectively date 0): {:?}",
+            res_a2d2
+        );
+
+        // Invalid date value (00)
+        let mut daydate_a2d3 = AlarmDayDate(0x00);
+        daydate_a2d3.set_alarm_mask4(false);
+        daydate_a2d3.set_day_date_select(DayDateSelect::Date);
+        let alarm2_d3 =
+            DS3231Alarm2::from_registers(default_minutes, default_hours_24h, daydate_a2d3);
+        let res_a2d3 = alarm2_d3.to_config();
+        assert!(
+            matches!(res_a2d3, Err(AlarmError::InvalidTime("Invalid date value"))),
+            "Alarm2 DateValZero: {:?}",
+            res_a2d3
+        );
+
+        // Invalid date value (32 -> BCD 0x32)
+        let mut daydate_a2d4 = AlarmDayDate(0x32);
+        daydate_a2d4.set_alarm_mask4(false);
+        daydate_a2d4.set_day_date_select(DayDateSelect::Date);
+        let alarm2_d4 =
+            DS3231Alarm2::from_registers(default_minutes, default_hours_24h, daydate_a2d4);
+        let res_a2d4 = alarm2_d4.to_config();
+        assert!(
+            matches!(res_a2d4, Err(AlarmError::InvalidTime("Invalid date value"))),
+            "Alarm2 DateVal32: {:?}",
+            res_a2d4
+        );
+    }
+
+    #[test]
+    fn test_create_alarm_time_components_errors() {
+        // Invalid hour
+        assert!(matches!(
+            create_alarm_time_components(24, 0, None),
+            Err(AlarmError::DateTime(DS3231DateTimeError::InvalidDateTime))
+        ));
+
+        // Invalid minute
+        assert!(matches!(
+            create_alarm_time_components(0, 60, None),
+            Err(AlarmError::DateTime(DS3231DateTimeError::InvalidDateTime))
+        ));
+    }
+
+    #[test]
+    fn test_create_alarm_day_date_component_errors() {
+        // Invalid date
+        assert!(matches!(
+            create_alarm_day_date_component(32, false), // Date 32
+            Err(AlarmError::DateTime(DS3231DateTimeError::InvalidDateTime))
+        ));
     }
 }

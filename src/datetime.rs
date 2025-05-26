@@ -44,8 +44,8 @@ impl DS3231DateTime {
         if value > max_value {
             return Err(DS3231DateTimeError::InvalidDateTime);
         }
-        let ones = u8::try_from(value % 10).map_err(|_| DS3231DateTimeError::InvalidDateTime)?;
-        let tens = u8::try_from(value / 10).map_err(|_| DS3231DateTimeError::InvalidDateTime)?;
+        let ones = (value % 10) as u8;
+        let tens = u8::try_from(value / 10).unwrap();
         Ok((ones, tens))
     }
 
@@ -77,8 +77,7 @@ impl DS3231DateTime {
 
         match time_representation {
             TimeRepresentation::TwentyFourHour => {
-                let ones =
-                    u8::try_from(hour % 10).map_err(|_| DS3231DateTimeError::InvalidDateTime)?;
+                let ones = (hour % 10) as u8;
                 let ten_hours = u8::from((10..20).contains(&hour));
                 let twenty_hours = u8::from(hour >= 20);
                 value.set_hours(ones);
@@ -93,10 +92,8 @@ impl DS3231DateTime {
                     13..=23 => (hour - 12, true), // 1-11 PM
                     _ => unreachable!(),          // Already checked h <= 23
                 };
-                let ones =
-                    u8::try_from(hour12 % 10).map_err(|_| DS3231DateTimeError::InvalidDateTime)?;
-                let tens =
-                    u8::try_from(hour12 / 10).map_err(|_| DS3231DateTimeError::InvalidDateTime)?;
+                let ones = (hour12 % 10) as u8;
+                let tens = u8::try_from(hour12 / 10).unwrap();
                 value.set_hours(ones);
                 value.set_ten_hours(tens);
                 value.set_pm_or_twenty_hours(u8::from(is_pm));
@@ -110,7 +107,7 @@ impl DS3231DateTime {
             return Err(DS3231DateTimeError::InvalidDateTime);
         }
         let mut value = Day::default();
-        value.set_day(u8::try_from(weekday).map_err(|_| DS3231DateTimeError::InvalidDateTime)?);
+        value.set_day(u8::try_from(weekday).unwrap());
         Ok(value)
     }
 
@@ -140,8 +137,7 @@ impl DS3231DateTime {
             return Err(DS3231DateTimeError::YearNotAfter1999);
         }
 
-        let mut year_offset =
-            u8::try_from(year - 2000).map_err(|_| DS3231DateTimeError::InvalidDateTime)?;
+        let mut year_offset = u8::try_from(year - 2000).unwrap();
         let century = if year_offset > 99 {
             year_offset = year_offset.wrapping_sub(100);
             true
@@ -216,9 +212,7 @@ impl DS3231DateTime {
 
         let year_offset = 10 * u32::from(self.year.ten_year()) + u32::from(self.year.year());
         let century_offset = if self.month.century() { 100 } else { 0 };
-        let year = 2000_i32
-            + i32::try_from(year_offset + century_offset)
-                .map_err(|_| DS3231DateTimeError::InvalidDateTime)?;
+        let year = 2000_i32 + i32::try_from(year_offset + century_offset).unwrap();
         let month = 10 * u32::from(self.month.ten_month()) + u32::from(self.month.month());
         let date = 10 * u32::from(self.date.ten_date()) + u32::from(self.date.date());
 
@@ -769,5 +763,245 @@ mod tests {
 
         let converted_2100 = raw_2100.into_datetime().unwrap();
         assert_eq!(year_2100, converted_2100);
+    }
+
+    #[test]
+    fn test_convert_seconds_direct() {
+        // Test successful conversions with various values
+        let seconds_0 = DS3231DateTime::convert_seconds(0).unwrap();
+        assert_eq!(seconds_0.seconds(), 0);
+        assert_eq!(seconds_0.ten_seconds(), 0);
+
+        let seconds_9 = DS3231DateTime::convert_seconds(9).unwrap();
+        assert_eq!(seconds_9.seconds(), 9);
+        assert_eq!(seconds_9.ten_seconds(), 0);
+
+        let seconds_10 = DS3231DateTime::convert_seconds(10).unwrap();
+        assert_eq!(seconds_10.seconds(), 0);
+        assert_eq!(seconds_10.ten_seconds(), 1);
+
+        let seconds_59 = DS3231DateTime::convert_seconds(59).unwrap();
+        assert_eq!(seconds_59.seconds(), 9);
+        assert_eq!(seconds_59.ten_seconds(), 5);
+
+        let seconds_30 = DS3231DateTime::convert_seconds(30).unwrap();
+        assert_eq!(seconds_30.seconds(), 0);
+        assert_eq!(seconds_30.ten_seconds(), 3);
+    }
+
+    #[test]
+    fn test_convert_minutes_direct() {
+        // Test successful conversions with various values
+        let minutes_0 = DS3231DateTime::convert_minutes(0).unwrap();
+        assert_eq!(minutes_0.minutes(), 0);
+        assert_eq!(minutes_0.ten_minutes(), 0);
+
+        let minutes_9 = DS3231DateTime::convert_minutes(9).unwrap();
+        assert_eq!(minutes_9.minutes(), 9);
+        assert_eq!(minutes_9.ten_minutes(), 0);
+
+        let minutes_10 = DS3231DateTime::convert_minutes(10).unwrap();
+        assert_eq!(minutes_10.minutes(), 0);
+        assert_eq!(minutes_10.ten_minutes(), 1);
+
+        let minutes_59 = DS3231DateTime::convert_minutes(59).unwrap();
+        assert_eq!(minutes_59.minutes(), 9);
+        assert_eq!(minutes_59.ten_minutes(), 5);
+
+        let minutes_45 = DS3231DateTime::convert_minutes(45).unwrap();
+        assert_eq!(minutes_45.minutes(), 5);
+        assert_eq!(minutes_45.ten_minutes(), 4);
+    }
+
+    #[test]
+    fn test_convert_day_direct() {
+        // Test successful conversions for all valid weekdays
+        let day_0 = DS3231DateTime::convert_day(0).unwrap(); // Sunday
+        assert_eq!(day_0.day(), 0);
+
+        let day_1 = DS3231DateTime::convert_day(1).unwrap(); // Monday
+        assert_eq!(day_1.day(), 1);
+
+        let day_6 = DS3231DateTime::convert_day(6).unwrap(); // Saturday
+        assert_eq!(day_6.day(), 6);
+
+        let day_3 = DS3231DateTime::convert_day(3).unwrap(); // Wednesday
+        assert_eq!(day_3.day(), 3);
+    }
+
+    #[test]
+    fn test_convert_date_direct() {
+        // Test successful conversions with various date values
+        let date_1 = DS3231DateTime::convert_date(1).unwrap();
+        assert_eq!(date_1.date(), 1);
+        assert_eq!(date_1.ten_date(), 0);
+
+        let date_9 = DS3231DateTime::convert_date(9).unwrap();
+        assert_eq!(date_9.date(), 9);
+        assert_eq!(date_9.ten_date(), 0);
+
+        let date_10 = DS3231DateTime::convert_date(10).unwrap();
+        assert_eq!(date_10.date(), 0);
+        assert_eq!(date_10.ten_date(), 1);
+
+        let date_31 = DS3231DateTime::convert_date(31).unwrap();
+        assert_eq!(date_31.date(), 1);
+        assert_eq!(date_31.ten_date(), 3);
+
+        let date_15 = DS3231DateTime::convert_date(15).unwrap();
+        assert_eq!(date_15.date(), 5);
+        assert_eq!(date_15.ten_date(), 1);
+    }
+
+    #[test]
+    fn test_convert_month_direct() {
+        // Test successful conversions with various month values
+        let month_1 = DS3231DateTime::convert_month(1).unwrap(); // January
+        assert_eq!(month_1.month(), 1);
+        assert_eq!(month_1.ten_month(), 0);
+
+        let month_9 = DS3231DateTime::convert_month(9).unwrap(); // September
+        assert_eq!(month_9.month(), 9);
+        assert_eq!(month_9.ten_month(), 0);
+
+        let month_10 = DS3231DateTime::convert_month(10).unwrap(); // October
+        assert_eq!(month_10.month(), 0);
+        assert_eq!(month_10.ten_month(), 1);
+
+        let month_12 = DS3231DateTime::convert_month(12).unwrap(); // December
+        assert_eq!(month_12.month(), 2);
+        assert_eq!(month_12.ten_month(), 1);
+    }
+
+    #[test]
+    fn test_ds3231datetime_debug_formatting() {
+        extern crate alloc;
+
+        // Test Debug formatting for DS3231DateTime
+        let dt = NaiveDate::from_ymd_opt(2024, 3, 14)
+            .unwrap()
+            .and_hms_opt(15, 30, 45)
+            .unwrap();
+        let raw = DS3231DateTime::from_datetime(&dt, TimeRepresentation::TwentyFourHour).unwrap();
+
+        let debug_str = alloc::format!("{:?}", raw);
+
+        // Should contain the struct name and field names
+        assert!(debug_str.contains("DS3231DateTime"));
+        assert!(debug_str.contains("seconds"));
+        assert!(debug_str.contains("minutes"));
+        assert!(debug_str.contains("hours"));
+        assert!(debug_str.contains("day"));
+        assert!(debug_str.contains("date"));
+        assert!(debug_str.contains("month"));
+        assert!(debug_str.contains("year"));
+    }
+
+    #[test]
+    fn test_ds3231datetime_copy_trait() {
+        // Test Copy trait implementation
+        let dt = NaiveDate::from_ymd_opt(2024, 3, 14)
+            .unwrap()
+            .and_hms_opt(15, 30, 45)
+            .unwrap();
+        let raw = DS3231DateTime::from_datetime(&dt, TimeRepresentation::TwentyFourHour).unwrap();
+
+        // Copy should work automatically (no explicit clone needed)
+        let copied = raw; // This uses Copy
+        let also_copied = raw; // Original should still be valid after copy
+
+        // Both should be equal
+        assert_eq!(copied, also_copied);
+        assert_eq!(raw, copied);
+
+        // Verify that the original is still accessible (proving Copy semantics)
+        let converted_original = raw.into_datetime().unwrap();
+        let converted_copy = copied.into_datetime().unwrap();
+        assert_eq!(converted_original, converted_copy);
+        assert_eq!(dt, converted_original);
+    }
+
+    #[test]
+    fn test_ds3231datetime_clone_trait() {
+        // Test Clone trait implementation
+        let dt = NaiveDate::from_ymd_opt(2024, 3, 14)
+            .unwrap()
+            .and_hms_opt(15, 30, 45)
+            .unwrap();
+        let raw = DS3231DateTime::from_datetime(&dt, TimeRepresentation::TwentyFourHour).unwrap();
+
+        // Test explicit clone() method
+        let cloned = raw.clone();
+        assert_eq!(raw, cloned);
+
+        // Both should convert to the same datetime
+        let converted_original = raw.into_datetime().unwrap();
+        let converted_clone = cloned.into_datetime().unwrap();
+        assert_eq!(converted_original, converted_clone);
+        assert_eq!(dt, converted_original);
+    }
+
+    #[test]
+    fn test_ds3231datetime_clone_from_trait() {
+        // Test Clone::clone_from trait implementation
+        let dt1 = NaiveDate::from_ymd_opt(2024, 3, 14)
+            .unwrap()
+            .and_hms_opt(15, 30, 45)
+            .unwrap();
+        let dt2 = NaiveDate::from_ymd_opt(2023, 12, 25)
+            .unwrap()
+            .and_hms_opt(9, 15, 30)
+            .unwrap();
+
+        let raw1 = DS3231DateTime::from_datetime(&dt1, TimeRepresentation::TwentyFourHour).unwrap();
+        let mut raw2 =
+            DS3231DateTime::from_datetime(&dt2, TimeRepresentation::TwentyFourHour).unwrap();
+
+        // Verify they're different initially
+        assert_ne!(raw1, raw2);
+
+        // Test clone_from
+        raw2.clone_from(&raw1);
+
+        // Now they should be equal
+        assert_eq!(raw1, raw2);
+
+        // Both should convert to the same datetime (dt1)
+        let converted1 = raw1.into_datetime().unwrap();
+        let converted2 = raw2.into_datetime().unwrap();
+        assert_eq!(converted1, converted2);
+        assert_eq!(dt1, converted1);
+    }
+
+    #[test]
+    fn test_ds3231datetime_partialeq_ne() {
+        // Test PartialEq::ne trait implementation (not-equal)
+        let dt1 = NaiveDate::from_ymd_opt(2024, 3, 14)
+            .unwrap()
+            .and_hms_opt(15, 30, 45)
+            .unwrap();
+        let dt2 = NaiveDate::from_ymd_opt(2023, 12, 25)
+            .unwrap()
+            .and_hms_opt(9, 15, 30)
+            .unwrap();
+
+        let raw1 = DS3231DateTime::from_datetime(&dt1, TimeRepresentation::TwentyFourHour).unwrap();
+        let raw2 = DS3231DateTime::from_datetime(&dt2, TimeRepresentation::TwentyFourHour).unwrap();
+        let raw1_copy =
+            DS3231DateTime::from_datetime(&dt1, TimeRepresentation::TwentyFourHour).unwrap();
+
+        // Test ne() method explicitly
+        assert!(raw1.ne(&raw2)); // Should be not equal
+        assert!(!raw1.ne(&raw1_copy)); // Should be equal (so ne returns false)
+
+        // Test with != operator (which uses ne() internally)
+        assert!(raw1 != raw2);
+        assert!(!(raw1 != raw1_copy));
+
+        // Also verify eq() for completeness
+        assert!(!raw1.eq(&raw2));
+        assert!(raw1.eq(&raw1_copy));
+        assert!(raw1 == raw1_copy);
+        assert!(!(raw1 == raw2));
     }
 }

@@ -126,8 +126,8 @@ mod fmt;
 
 mod alarm;
 mod datetime;
+mod registers;
 
-use bitfield::bitfield;
 use chrono::NaiveDateTime;
 use datetime::DS3231DateTimeError;
 #[cfg(not(feature = "async"))]
@@ -137,9 +137,16 @@ use embedded_hal_async::i2c::I2c as AsyncI2c;
 use paste::paste;
 
 use crate::datetime::DS3231DateTime;
+use crate::registers::RegAddr;
 
 // Re-export public types from alarm module
 pub use crate::alarm::{Alarm1Config, Alarm2Config, AlarmError, DS3231Alarm1, DS3231Alarm2};
+// Re-export public types from registers module
+pub use crate::registers::{
+    AgingOffset, AlarmDayDate, AlarmHours, AlarmMinutes, AlarmSeconds, Control, Date, Day,
+    DayDateSelect, Hours, InterruptControl, Minutes, Month, Ocillator, Seconds,
+    SquareWaveFrequency, Status, Temperature, TemperatureFraction, TimeRepresentation, Year,
+};
 
 /// Configuration for the DS3231 RTC device.
 ///
@@ -161,207 +168,6 @@ pub struct Config {
     pub oscillator_enable: Ocillator,
 }
 
-/// Register addresses for the DS3231 RTC.
-#[allow(unused)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum RegAddr {
-    /// Seconds register (0-59)
-    Seconds = 0x00,
-    /// Minutes register (0-59)
-    Minutes = 0x01,
-    /// Hours register (1-12 + AM/PM or 0-23)
-    Hours = 0x02,
-    /// Day register (1-7)
-    Day = 0x03,
-    /// Date register (1-31)
-    Date = 0x04,
-    /// Month register (1-12)
-    Month = 0x05,
-    /// Year register (0-99)
-    Year = 0x06,
-    /// Alarm 1 seconds register
-    Alarm1Seconds = 0x07,
-    /// Alarm 1 minutes register
-    Alarm1Minutes = 0x08,
-    /// Alarm 1 hours register
-    Alarm1Hours = 0x09,
-    /// Alarm 1 day/date register
-    Alarm1DayDate = 0x0A,
-    /// Alarm 2 minutes register
-    Alarm2Minutes = 0x0B,
-    /// Alarm 2 hours register
-    Alarm2Hours = 0x0C,
-    /// Alarm 2 day/date register
-    Alarm2DayDate = 0x0D,
-    /// Control register
-    Control = 0x0E,
-    /// Control/Status register
-    ControlStatus = 0x0F,
-    /// Aging offset register
-    AgingOffset = 0x10,
-    /// Temperature MSB register
-    MSBTemp = 0x11,
-    /// Temperature LSB register
-    LSBTemp = 0x12,
-}
-
-/// Time representation format for the DS3231.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum TimeRepresentation {
-    /// 24-hour format (0-23)
-    TwentyFourHour = 0,
-    /// 12-hour format (1-12 + AM/PM)
-    TwelveHour = 1,
-}
-impl From<u8> for TimeRepresentation {
-    /// Creates a `TimeRepresentation` from a raw register value.
-    ///
-    /// # Panics
-    /// Panics if the value is not 0 or 1.
-    fn from(v: u8) -> Self {
-        match v {
-            0 => TimeRepresentation::TwentyFourHour,
-            1 => TimeRepresentation::TwelveHour,
-            _ => panic!("Invalid value for TimeRepresentation: {}", v),
-        }
-    }
-}
-impl From<TimeRepresentation> for u8 {
-    /// Converts a `TimeRepresentation` to its raw register value.
-    fn from(v: TimeRepresentation) -> Self {
-        v as u8
-    }
-}
-
-/// Oscillator control for the DS3231.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Ocillator {
-    /// Oscillator is enabled
-    Enabled = 0,
-    /// Oscillator is disabled
-    Disabled = 1,
-}
-impl From<u8> for Ocillator {
-    /// Creates an Ocillator from a raw register value.
-    ///
-    /// # Panics
-    /// Panics if the value is not 0 or 1.
-    fn from(v: u8) -> Self {
-        match v {
-            0 => Ocillator::Enabled,
-            1 => Ocillator::Disabled,
-            _ => panic!("Invalid value for Ocillator: {}", v),
-        }
-    }
-}
-impl From<Ocillator> for u8 {
-    /// Converts an Ocillator to its raw register value.
-    fn from(v: Ocillator) -> Self {
-        v as u8
-    }
-}
-
-/// Interrupt control mode for the DS3231.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum InterruptControl {
-    /// Output square wave on INT/SQW pin
-    SquareWave = 0,
-    /// Output interrupt signal on INT/SQW pin
-    Interrupt = 1,
-}
-impl From<u8> for InterruptControl {
-    /// Creates an `InterruptControl` from a raw register value.
-    ///
-    /// # Panics
-    /// Panics if the value is not 0 or 1.
-    fn from(v: u8) -> Self {
-        match v {
-            0 => InterruptControl::SquareWave,
-            1 => InterruptControl::Interrupt,
-            _ => panic!("Invalid value for InterruptControl: {}", v),
-        }
-    }
-}
-impl From<InterruptControl> for u8 {
-    /// Converts an `InterruptControl` to its raw register value.
-    fn from(v: InterruptControl) -> Self {
-        v as u8
-    }
-}
-
-/// Square wave output frequency options.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum SquareWaveFrequency {
-    /// 1 Hz square wave output
-    Hz1 = 0b00,
-    /// 1.024 kHz square wave output
-    Hz1024 = 0b01,
-    /// 4.096 kHz square wave output
-    Hz4096 = 0b10,
-    /// 8.192 kHz square wave output
-    Hz8192 = 0b11,
-}
-impl From<u8> for SquareWaveFrequency {
-    /// Creates a `SquareWaveFrequency` from a raw register value.
-    ///
-    /// # Panics
-    /// Panics if the value is not 0b00, 0b01, 0b10, or 0b11.
-    fn from(v: u8) -> Self {
-        match v {
-            0b00 => SquareWaveFrequency::Hz1,
-            0b01 => SquareWaveFrequency::Hz1024,
-            0b10 => SquareWaveFrequency::Hz4096,
-            0b11 => SquareWaveFrequency::Hz8192,
-            _ => panic!("Invalid value for SquareWaveFrequency: {}", v),
-        }
-    }
-}
-impl From<SquareWaveFrequency> for u8 {
-    /// Converts a `SquareWaveFrequency` to its raw register value.
-    fn from(v: SquareWaveFrequency) -> Self {
-        v as u8
-    }
-}
-
-/// Day/Date select for alarm registers (DY/DT bit).
-///
-/// This controls whether the alarm day/date register matches against
-/// the day of the week or the date of the month.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum DayDateSelect {
-    /// Match against date of the month (1-31)
-    Date = 0,
-    /// Match against day of the week (1-7, where 1=Sunday)
-    Day = 1,
-}
-
-impl From<u8> for DayDateSelect {
-    /// Creates a `DayDateSelect` from a raw register value.
-    ///
-    /// # Panics
-    /// Panics if the value is not 0 or 1.
-    fn from(v: u8) -> Self {
-        match v {
-            0 => DayDateSelect::Date,
-            1 => DayDateSelect::Day,
-            _ => panic!("Invalid value for DayDateSelect: {}", v),
-        }
-    }
-}
-
-impl From<DayDateSelect> for u8 {
-    /// Converts a `DayDateSelect` to its raw register value.
-    fn from(v: DayDateSelect) -> Self {
-        v as u8
-    }
-}
-
 /// Error type for DS3231 operations.
 #[derive(Debug)]
 pub enum DS3231Error<I2CE> {
@@ -377,346 +183,6 @@ impl<I2CE> From<I2CE> for DS3231Error<I2CE> {
     /// Creates a `DS3231Error` from an I2C error.
     fn from(e: I2CE) -> Self {
         DS3231Error::I2c(e)
-    }
-}
-
-// This macro generates the From<u8> and Into<u8> implementations for the
-// register type
-macro_rules! from_register_u8 {
-    ($typ:ty) => {
-        impl From<u8> for $typ {
-            fn from(v: u8) -> Self {
-                paste::item!([< $typ >](v))
-            }
-        }
-        impl From<$typ> for u8 {
-            fn from(v: $typ) -> Self {
-                v.0
-            }
-        }
-    };
-}
-
-bitfield! {
-    /// Seconds register (0-59) with BCD encoding.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Seconds(u8);
-    impl Debug;
-    /// Tens place of seconds (0-5)
-    pub ten_seconds, set_ten_seconds: 6, 4;
-    /// Ones place of seconds (0-9)
-    pub seconds, set_seconds: 3, 0;
-}
-from_register_u8!(Seconds);
-
-bitfield! {
-    /// Minutes register (0-59) with BCD encoding.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Minutes(u8);
-    impl Debug;
-    /// Tens place of minutes (0-5)
-    pub ten_minutes, set_ten_minutes: 6, 4;
-    /// Ones place of minutes (0-9)
-    pub minutes, set_minutes: 3, 0;
-}
-from_register_u8!(Minutes);
-
-bitfield! {
-    /// Hours register with format selection and BCD encoding.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Hours(u8);
-    impl Debug;
-    /// Time representation format (12/24 hour)
-    pub from into TimeRepresentation, time_representation, set_time_representation: 6, 6;
-    /// PM flag (12-hour) or 20-hour bit (24-hour)
-    pub pm_or_twenty_hours, set_pm_or_twenty_hours: 5, 5;
-    /// Tens place of hours
-    pub ten_hours, set_ten_hours: 4, 4;
-    /// Ones place of hours
-    pub hours, set_hours: 3, 0;
-}
-from_register_u8!(Hours);
-
-bitfield! {
-    /// Day of week register (1-7).
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Day(u8);
-    impl Debug;
-    /// Day of week (1-7)
-    pub day, set_day: 2, 0;
-}
-from_register_u8!(Day);
-
-bitfield! {
-    /// Date register (1-31) with BCD encoding.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Date(u8);
-    impl Debug;
-    /// Tens place of date (0-3)
-    pub ten_date, set_ten_date: 5, 4;
-    /// Ones place of date (0-9)
-    pub date, set_date: 3, 0;
-}
-from_register_u8!(Date);
-
-bitfield! {
-    /// Month register (1-12) with century flag and BCD encoding.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Month(u8);
-    impl Debug;
-    /// Century flag (1 = year 2000+)
-    pub century, set_century: 7;
-    /// Tens place of month (0-1)
-    pub ten_month, set_ten_month: 4, 4;
-    /// Ones place of month (0-9)
-    pub month, set_month: 3, 0;
-}
-from_register_u8!(Month);
-
-bitfield! {
-    /// Year register (0-99) with BCD encoding.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Year(u8);
-    impl Debug;
-    /// Tens place of year (0-9)
-    pub ten_year, set_ten_year: 7, 4;
-    /// Ones place of year (0-9)
-    pub year, set_year: 3, 0;
-}
-from_register_u8!(Year);
-
-bitfield! {
-    /// Control register for device configuration.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Control(u8);
-    impl Debug;
-    /// Oscillator enable/disable control
-    pub from into Ocillator, oscillator_enable, set_oscillator_enable: 7, 7;
-    /// Enable square wave output on battery power
-    pub battery_backed_square_wave, set_battery_backed_square_wave: 6;
-    /// Force temperature conversion
-    pub convert_temperature, set_convert_temperature: 5;
-    /// Square wave output frequency selection
-    pub from into SquareWaveFrequency, square_wave_frequency, set_square_wave_frequency: 4, 3;
-    /// INT/SQW pin function control
-    pub from into InterruptControl, interrupt_control, set_interrupt_control: 2, 2;
-    /// Enable alarm 2 interrupt
-    pub alarm2_interrupt_enable, set_alarm2_interrupt_enable: 1;
-    /// Enable alarm 1 interrupt
-    pub alarm1_interrupt_enable, set_alarm1_interrupt_enable: 0;
-}
-from_register_u8!(Control);
-
-#[cfg(feature = "defmt")]
-impl defmt::Format for Control {
-    fn format(&self, f: defmt::Formatter) {
-        match self.oscillator_enable() {
-            Ocillator::Enabled => defmt::write!(f, "Oscillator enabled"),
-            Ocillator::Disabled => defmt::write!(f, "Oscillator disabled"),
-        }
-        if self.battery_backed_square_wave() {
-            defmt::write!(f, ", Battery backed square wave enabled");
-        }
-        if self.convert_temperature() {
-            defmt::write!(f, ", Temperature conversion enabled");
-        }
-        match self.square_wave_frequency() {
-            SquareWaveFrequency::Hz1 => defmt::write!(f, ", 1 Hz square wave"),
-            SquareWaveFrequency::Hz1024 => defmt::write!(f, ", 1024 Hz square wave"),
-            SquareWaveFrequency::Hz4096 => defmt::write!(f, ", 4096 Hz square wave"),
-            SquareWaveFrequency::Hz8192 => defmt::write!(f, ", 8192 Hz square wave"),
-        }
-        match self.interrupt_control() {
-            InterruptControl::SquareWave => defmt::write!(f, ", Square wave output"),
-            InterruptControl::Interrupt => defmt::write!(f, ", Interrupt output"),
-        }
-        if self.alarm2_interrupt_enable() {
-            defmt::write!(f, ", Alarm 2 interrupt enabled");
-        }
-        if self.alarm1_interrupt_enable() {
-            defmt::write!(f, ", Alarm 1 interrupt enabled");
-        }
-    }
-}
-
-bitfield! {
-    /// Status register for device state and flags.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Status(u8);
-    impl Debug;
-    /// Oscillator stop flag
-    pub oscillator_stop_flag, set_oscillator_stop_flag: 7;
-    /// Enable 32kHz output
-    pub enable_32khz_output, set_enable_32khz_output: 3;
-    /// Device busy flag
-    pub busy, set_busy: 2;
-    /// Alarm 2 triggered flag
-    pub alarm2_flag, set_alarm2_flag: 1;
-    /// Alarm 1 triggered flag
-    pub alarm1_flag, set_alarm1_flag: 0;
-}
-from_register_u8!(Status);
-
-bitfield! {
-    /// Aging offset register for oscillator adjustment.
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct AgingOffset(u8);
-    impl Debug;
-    /// Aging offset value (-128 to +127)
-    pub i8, aging_offset, set_aging_offset: 7, 0;
-}
-from_register_u8!(AgingOffset);
-
-bitfield! {
-    /// Temperature register (integer part).
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct Temperature(u8);
-    impl Debug;
-    /// Temperature value (-128 to +127)
-    pub i8, temperature, set_temperature: 7, 0;
-}
-from_register_u8!(Temperature);
-
-bitfield! {
-    /// Temperature fraction register (decimal part).
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct TemperatureFraction(u8);
-    impl Debug;
-    /// Temperature fraction value (0.00 to 0.99)
-    pub temperature_fraction, set_temperature_fraction: 7, 0;
-}
-from_register_u8!(TemperatureFraction);
-
-// Alarm register types with mask bits and special control bits
-
-bitfield! {
-    /// Alarm Seconds register with mask bit (only used by Alarm 1).
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct AlarmSeconds(u8);
-    impl Debug;
-    /// Alarm mask bit 1 (A1M1)
-    pub alarm_mask1, set_alarm_mask1: 7;
-    /// Tens place of seconds (0-5)
-    pub ten_seconds, set_ten_seconds: 6, 4;
-    /// Ones place of seconds (0-9)
-    pub seconds, set_seconds: 3, 0;
-}
-from_register_u8!(AlarmSeconds);
-
-#[cfg(feature = "defmt")]
-impl defmt::Format for AlarmSeconds {
-    fn format(&self, f: defmt::Formatter) {
-        let seconds = 10 * self.ten_seconds() + self.seconds();
-        defmt::write!(f, "AlarmSeconds({}s", seconds);
-        if self.alarm_mask1() {
-            defmt::write!(f, ", masked");
-        }
-        defmt::write!(f, ")");
-    }
-}
-
-bitfield! {
-    /// Alarm Minutes register with mask bit (used by both Alarm 1 and Alarm 2).
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct AlarmMinutes(u8);
-    impl Debug;
-    /// Alarm mask bit 2 (A1M2/A2M2)
-    pub alarm_mask2, set_alarm_mask2: 7;
-    /// Tens place of minutes (0-5)
-    pub ten_minutes, set_ten_minutes: 6, 4;
-    /// Ones place of minutes (0-9)
-    pub minutes, set_minutes: 3, 0;
-}
-from_register_u8!(AlarmMinutes);
-
-#[cfg(feature = "defmt")]
-impl defmt::Format for AlarmMinutes {
-    fn format(&self, f: defmt::Formatter) {
-        let minutes = 10 * self.ten_minutes() + self.minutes();
-        defmt::write!(f, "AlarmMinutes({}m", minutes);
-        if self.alarm_mask2() {
-            defmt::write!(f, ", masked");
-        }
-        defmt::write!(f, ")");
-    }
-}
-
-bitfield! {
-    /// Alarm Hours register with mask bit and time format control (used by both Alarm 1 and Alarm 2).
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct AlarmHours(u8);
-    impl Debug;
-    /// Alarm mask bit 3 (A1M3/A2M3)
-    pub alarm_mask3, set_alarm_mask3: 7;
-    /// Time representation format (12/24 hour)
-    pub from into TimeRepresentation, time_representation, set_time_representation: 6, 6;
-    /// PM flag (12-hour) or 20-hour bit (24-hour)
-    pub pm_or_twenty_hours, set_pm_or_twenty_hours: 5, 5;
-    /// Tens place of hours
-    pub ten_hours, set_ten_hours: 4, 4;
-    /// Ones place of hours
-    pub hours, set_hours: 3, 0;
-}
-from_register_u8!(AlarmHours);
-
-#[cfg(feature = "defmt")]
-impl defmt::Format for AlarmHours {
-    fn format(&self, f: defmt::Formatter) {
-        let hours = 10 * self.ten_hours() + self.hours();
-        match self.time_representation() {
-            TimeRepresentation::TwentyFourHour => {
-                let hours = hours + 20 * self.pm_or_twenty_hours();
-                defmt::write!(f, "AlarmHours({}h", hours);
-            }
-            TimeRepresentation::TwelveHour => {
-                let is_pm = self.pm_or_twenty_hours() != 0;
-                defmt::write!(
-                    f,
-                    "AlarmHours({}h {}",
-                    hours,
-                    if is_pm { "PM" } else { "AM" }
-                );
-            }
-        }
-        if self.alarm_mask3() {
-            defmt::write!(f, ", masked");
-        }
-        defmt::write!(f, ")");
-    }
-}
-
-bitfield! {
-    /// Alarm Day/Date register with mask bit and DY/DT control (used by both Alarm 1 and Alarm 2).
-    #[derive(Clone, Copy, Default, PartialEq)]
-    pub struct AlarmDayDate(u8);
-    impl Debug;
-    /// Alarm mask bit 4 (A1M4/A2M4)
-    pub alarm_mask4, set_alarm_mask4: 7;
-    /// Day/Date select (1=day of week, 0=date of month)
-    pub from into DayDateSelect, day_date_select, set_day_date_select: 6, 6;
-    /// Tens place of date (0-3) when DY/DT=0, or unused when DY/DT=1
-    pub ten_date, set_ten_date: 5, 4;
-    /// Day of week (1-7) when DY/DT=1, or ones place of date (0-9) when DY/DT=0
-    pub day_or_date, set_day_or_date: 3, 0;
-}
-from_register_u8!(AlarmDayDate);
-
-#[cfg(feature = "defmt")]
-impl defmt::Format for AlarmDayDate {
-    fn format(&self, f: defmt::Formatter) {
-        match self.day_date_select() {
-            DayDateSelect::Day => {
-                defmt::write!(f, "AlarmDayDate(day {})", self.day_or_date());
-            }
-            DayDateSelect::Date => {
-                let date = 10 * self.ten_date() + self.day_or_date();
-                defmt::write!(f, "AlarmDayDate(date {})", date);
-            }
-        }
-        if self.alarm_mask4() {
-            defmt::write!(f, ", masked");
-        }
-        defmt::write!(f, ")");
     }
 }
 
@@ -929,20 +395,20 @@ where
     /// Gets the current Alarm 1 configuration from the device.
     ///
     /// # Returns
-    /// * `Ok(DS3231Alarm1)` - The current alarm 1 configuration
+    /// * `Ok(Alarm1Config)` - The current alarm 1 configuration
     /// * `Err(DS3231Error)` on error
     ///
     /// # Errors
-    /// Returns `DS3231Error::I2c` if there is an I2C communication error
-    pub async fn alarm1(&mut self) -> Result<DS3231Alarm1, DS3231Error<E>> {
+    /// * Returns `DS3231Error::I2c` if there is an I2C communication error
+    /// * Returns `DS3231Error::Alarm` if the device contains invalid alarm register values
+    pub async fn alarm1(&mut self) -> Result<Alarm1Config, DS3231Error<E>> {
         let seconds = self.alarm1_second().await?;
         let minutes = self.alarm1_minute().await?;
         let hours = self.alarm1_hour().await?;
         let day_date = self.alarm1_day_date().await?;
 
-        Ok(DS3231Alarm1::from_registers(
-            seconds, minutes, hours, day_date,
-        ))
+        let alarm = DS3231Alarm1::from_registers(seconds, minutes, hours, day_date);
+        alarm.to_config().map_err(DS3231Error::Alarm)
     }
 
     /// Sets Alarm 1 configuration.
@@ -1025,17 +491,19 @@ where
     /// Gets the current Alarm 2 configuration from the device.
     ///
     /// # Returns
-    /// * `Ok(DS3231Alarm2)` - The current alarm 2 configuration
+    /// * `Ok(Alarm2Config)` - The current alarm 2 configuration
     /// * `Err(DS3231Error)` on error
     ///
     /// # Errors
-    /// Returns `DS3231Error::I2c` if there is an I2C communication error
-    pub async fn alarm2(&mut self) -> Result<DS3231Alarm2, DS3231Error<E>> {
+    /// * Returns `DS3231Error::I2c` if there is an I2C communication error
+    /// * Returns `DS3231Error::Alarm` if the device contains invalid alarm register values
+    pub async fn alarm2(&mut self) -> Result<Alarm2Config, DS3231Error<E>> {
         let minutes = self.alarm2_minute().await?;
         let hours = self.alarm2_hour().await?;
         let day_date = self.alarm2_day_date().await?;
 
-        Ok(DS3231Alarm2::from_registers(minutes, hours, day_date))
+        let alarm = DS3231Alarm2::from_registers(minutes, hours, day_date);
+        alarm.to_config().map_err(DS3231Error::Alarm)
     }
 
     /// Sets Alarm 2 configuration.
@@ -1546,8 +1014,22 @@ mod tests {
 
         // Test reading alarm1
         let alarm1 = dev.alarm1().await.unwrap();
-        assert_eq!(alarm1.seconds().seconds(), 0);
-        assert_eq!(alarm1.seconds().ten_seconds(), 3);
+        match alarm1 {
+            Alarm1Config::AtTimeOnDate {
+                hours,
+                minutes,
+                seconds,
+                date,
+                is_pm,
+            } => {
+                assert_eq!(hours, 12);
+                assert_eq!(minutes, 45);
+                assert_eq!(seconds, 30);
+                assert_eq!(date, 15);
+                assert_eq!(is_pm, None);
+            }
+            _ => panic!("Expected AtTimeOnDate alarm configuration"),
+        }
 
         // Test setting alarm1
         let config = Alarm1Config::AtTime {
@@ -1591,8 +1073,20 @@ mod tests {
 
         // Test reading alarm2
         let alarm2 = dev.alarm2().await.unwrap();
-        assert_eq!(alarm2.minutes().minutes(), 5);
-        assert_eq!(alarm2.minutes().ten_minutes(), 4);
+        match alarm2 {
+            Alarm2Config::AtTimeOnDate {
+                hours,
+                minutes,
+                date,
+                is_pm,
+            } => {
+                assert_eq!(hours, 12);
+                assert_eq!(minutes, 45);
+                assert_eq!(date, 15);
+                assert_eq!(is_pm, None);
+            }
+            _ => panic!("Expected AtTimeOnDate alarm configuration"),
+        }
 
         // Test setting alarm2
         let config = Alarm2Config::AtTime {
@@ -2290,5 +1784,25 @@ mod tests {
         dev.set_alarm2_day_date(alarm2_day_date).await.unwrap();
 
         dev.i2c.done();
+    }
+
+    #[test]
+    fn test_ds3231_error_display_coverage() {
+        // Test DS3231Error Debug implementation for different error types
+        use crate::alarm::AlarmError;
+        use crate::datetime::DS3231DateTimeError;
+
+        let i2c_error: DS3231Error<&str> = DS3231Error::I2c("I2C communication failed");
+        let debug_str = alloc::format!("{:?}", i2c_error);
+        assert!(debug_str.contains("I2c"));
+
+        let datetime_error: DS3231Error<()> =
+            DS3231Error::DateTime(DS3231DateTimeError::InvalidDateTime);
+        let debug_str = alloc::format!("{:?}", datetime_error);
+        assert!(debug_str.contains("DateTime"));
+
+        let alarm_error: DS3231Error<()> = DS3231Error::Alarm(AlarmError::InvalidTime("test"));
+        let debug_str = alloc::format!("{:?}", alarm_error);
+        assert!(debug_str.contains("Alarm"));
     }
 }
