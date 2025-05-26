@@ -596,6 +596,59 @@ where
     );
 }
 
+// Temperature reading implementation with f32 support
+#[cfg(feature = "temperature_f32")]
+#[maybe_async_cfg::maybe(
+    sync(
+        cfg(not(feature = "async")),
+        self = "DS3231",
+        idents(AsyncI2c(sync = "I2c"))
+    ),
+    async(feature = "async", keep_self)
+)]
+impl<I2C, E> DS3231<I2C>
+where
+    I2C: AsyncI2c<Error = E>,
+{
+    /// Reads the temperature from both temperature registers and returns it as an f32.
+    ///
+    /// This method combines the integer temperature from register 0x11 and the fractional
+    /// temperature from register 0x12 to provide a precise temperature reading with 0.25°C resolution.
+    /// The temperature is encoded in two's complement format.
+    ///
+    /// # Returns
+    /// * `Ok(f32)` - The temperature in degrees Celsius with 0.25°C resolution
+    /// * `Err(DS3231Error)` on error
+    ///
+    /// # Errors
+    /// Returns `DS3231Error::I2c` if there is an I2C communication error.
+    ///
+    /// # Examples
+    /// ```rust,ignore
+    /// let temp = rtc.temperature_f32().await?;
+    /// println!("Temperature: {:.2}°C", temp);
+    /// ```
+    pub async fn temperature_f32(&mut self) -> Result<f32, DS3231Error<E>> {
+        // Read both temperature registers in a single transaction
+        let mut data = [0; 2];
+        self.i2c
+            .write_read(self.address, &[RegAddr::MSBTemp as u8], &mut data)
+            .await?;
+
+        let integer_part = data[0] as i8;
+        let fraction_bits = (data[1] >> 6) & 0x03;
+        let fractional_part = match fraction_bits {
+            0b00 => 0.00,
+            0b01 => 0.25,
+            0b10 => 0.50,
+            0b11 => 0.75,
+            _ => unreachable!(), // Should not happen as we mask with 0x03
+        };
+
+        Ok(f32::from(integer_part) + fractional_part)
+    }
+}
+
 #[maybe_async_cfg::maybe(sync(cfg(not(feature = "async"))), async(feature = "async", keep_self))]
 #[cfg(test)]
 mod tests {
@@ -783,7 +836,13 @@ mod tests {
     async fn test_read_temperature() {
         // Temperature value: 25°C (0x19) with fraction 0x60 (0.375°C)
         let expected_msb = 0x19; // 25°C
-        let expected_lsb = 0x60; // 0.375°C
+                                 // LSB register 0x60 means bits 7-6 are 01 (0.25°C), not 0.375. 0.375 is not possible with 2 bits.
+                                 // Datasheet: 00011001 01b = +25.25°C. Here 01b means bits 7-6 of LSB are 01.
+                                 // So, if LSBTemp register value is 0x40 (0b01000000), this corresponds to 0.25 C.
+                                 // If LSBTemp register value is 0x80 (0b10000000), this corresponds to 0.50 C.
+                                 // If LSBTemp register value is 0xC0 (0b11000000), this corresponds to 0.75 C.
+                                 // The old comment "0x60 (0.375°C)" was incorrect. Let's assume 0.25 for this test for clarity.
+        let expected_lsb_reg_value = 0x40; // Represents 0.25°C, so bits 7-6 are '01'
 
         let mock = setup_mock(&[
             I2cTrans::write_read(
@@ -794,15 +853,151 @@ mod tests {
             I2cTrans::write_read(
                 DEVICE_ADDRESS,
                 vec![RegAddr::LSBTemp as u8],
-                vec![expected_lsb],
+                vec![expected_lsb_reg_value], // Mock returns 0x40 for LSB Temp register
             ),
         ]);
         let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
 
         let temp = dev.temperature().await.unwrap();
-        let frac = dev.temperature_fraction().await.unwrap();
+        let frac = dev.temperature_fraction().await.unwrap(); // Reads LSBTemp and creates TemperatureFraction(0x40)
         assert_eq!(temp.temperature(), 25);
-        assert_eq!(frac.temperature_fraction(), 0x60);
+        // frac.temperature_fraction() is the getter for bits 7-6 of TemperatureFraction(0x40)
+        // For 0x40 (0b01000000), bits 7-6 are '01', so getter returns 1.
+        assert_eq!(frac.temperature_fraction(), 0b01);
+        dev.i2c.done();
+    }
+
+    #[cfg(feature = "temperature_f32")]
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_temperature_f32_positive() {
+        // Test positive temperature: 25.25°C
+        // MSB: 0x19 (25°C), LSB: 0x40 (0.25°C in upper 2 bits)
+        let expected_data = [0x19, 0x40];
+
+        let mock = setup_mock(&[I2cTrans::write_read(
+            DEVICE_ADDRESS,
+            vec![RegAddr::MSBTemp as u8],
+            expected_data.to_vec(),
+        )]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        let temp = dev.temperature_f32().await.unwrap();
+        assert_eq!(temp, 25.25);
+        dev.i2c.done();
+    }
+
+    #[cfg(feature = "temperature_f32")]
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_temperature_f32_negative() {
+        // Test negative temperature: -10.75°C
+        // MSB: 0xF5 (-11°C), LSB: 0x40 (0.25°C in upper 2 bits)
+        // So, -11.0 + 0.25 = -10.75
+        let expected_data = [0xF5, 0x40];
+
+        let mock = setup_mock(&[I2cTrans::write_read(
+            DEVICE_ADDRESS,
+            vec![RegAddr::MSBTemp as u8],
+            expected_data.to_vec(),
+        )]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        let temp = dev.temperature_f32().await.unwrap();
+        assert_eq!(temp, -10.75);
+        dev.i2c.done();
+    }
+
+    #[cfg(feature = "temperature_f32")]
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_temperature_f32_zero() {
+        // Test zero temperature: 0.00°C
+        // MSB: 0x00 (0°C), LSB: 0x00 (0.00°C in upper 2 bits)
+        let expected_data = [0x00, 0x00];
+
+        let mock = setup_mock(&[I2cTrans::write_read(
+            DEVICE_ADDRESS,
+            vec![RegAddr::MSBTemp as u8],
+            expected_data.to_vec(),
+        )]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        let temp = dev.temperature_f32().await.unwrap();
+        assert_eq!(temp, 0.00);
+        dev.i2c.done();
+    }
+
+    #[cfg(feature = "temperature_f32")]
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_temperature_f32_all_fractions() {
+        // Test all possible fractional values
+        let test_cases = [
+            (0x19, 0x00, 25.00), // 0.00°C fraction
+            (0x19, 0x40, 25.25), // 0.25°C fraction
+            (0x19, 0x80, 25.50), // 0.50°C fraction
+            (0x19, 0xC0, 25.75), // 0.75°C fraction
+        ];
+
+        for (msb, lsb, expected_temp) in test_cases {
+            let expected_data = [msb, lsb];
+            let mock = setup_mock(&[I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::MSBTemp as u8],
+                expected_data.to_vec(),
+            )]);
+            let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+            let temp = dev.temperature_f32().await.unwrap();
+            assert_eq!(temp, expected_temp);
+            dev.i2c.done();
+        }
+    }
+
+    #[cfg(feature = "temperature_f32")]
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_temperature_f32_extreme_values() {
+        // Test extreme temperature values
+        let test_cases = [
+            (0x7F, 0xC0, 127.75),  // Maximum positive: +127.75°C
+            (0x80, 0x00, -128.00), // Maximum negative: -128.00°C
+            (0xFF, 0xC0, -0.25),   // Just below zero: -0.25°C
+        ];
+
+        for (msb, lsb, expected_temp) in test_cases {
+            let expected_data = [msb, lsb];
+            let mock = setup_mock(&[I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::MSBTemp as u8],
+                expected_data.to_vec(),
+            )]);
+            let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+            let temp = dev.temperature_f32().await.unwrap();
+            assert_eq!(temp, expected_temp);
+            dev.i2c.done();
+        }
+    }
+
+    #[cfg(feature = "temperature_f32")]
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_temperature_f32_datasheet_example() {
+        // Test the example from the datasheet: 00011001 01b = +25.25°C
+        // MSB: 0x19 (25°C), LSB: 0x40 (01 in upper 2 bits = 0.25°C)
+        let expected_data = [0x19, 0x40];
+
+        let mock = setup_mock(&[I2cTrans::write_read(
+            DEVICE_ADDRESS,
+            vec![RegAddr::MSBTemp as u8],
+            expected_data.to_vec(),
+        )]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        let temp = dev.temperature_f32().await.unwrap();
+        assert_eq!(temp, 25.25);
         dev.i2c.done();
     }
 
@@ -1247,9 +1442,20 @@ mod tests {
         assert_eq!(temperature.temperature(), 25);
 
         // Test TemperatureFraction register
-        let mut temp_frac = TemperatureFraction::default();
-        temp_frac.set_temperature_fraction(0x40);
-        assert_eq!(temp_frac.temperature_fraction(), 0x40);
+        let mut temp_frac = TemperatureFraction::default(); // default is 0x00
+                                                            // The setter `set_temperature_fraction` expects the 2-bit value (0, 1, 2, or 3).
+                                                            // To set 0.25°C (which is bits 7-6 = 01), we pass 0b01 to the setter.
+        temp_frac.set_temperature_fraction(0b01);
+        // The getter `temperature_fraction()` should then return this 2-bit value (0b01).
+        assert_eq!(temp_frac.temperature_fraction(), 0b01);
+        // The raw u8 value of temp_frac should be 0b01000000 = 0x40, because set_temperature_fraction(0b01)
+        // places 01 into bits 7-6.
+        assert_eq!(u8::from(temp_frac), 0x40);
+
+        // Test setting another value, e.g., 0.75°C (bits 7-6 = 11)
+        temp_frac.set_temperature_fraction(0b11);
+        assert_eq!(temp_frac.temperature_fraction(), 0b11); // Getter returns 3
+        assert_eq!(u8::from(temp_frac), 0xC0); // Raw u8 should be 0b11000000
     }
 
     #[test]

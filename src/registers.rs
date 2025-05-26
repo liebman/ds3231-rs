@@ -535,7 +535,8 @@ bitfield! {
     pub struct TemperatureFraction(u8);
     impl Debug;
     /// Temperature fraction value (0.00 to 0.99)
-    pub temperature_fraction, set_temperature_fraction: 7, 0;
+    pub temperature_fraction, set_temperature_fraction: 7, 6;
+
 }
 from_register_u8!(TemperatureFraction);
 
@@ -963,26 +964,39 @@ mod tests {
     #[test]
     fn test_temperature_fraction_register_conversions() {
         // Test different fraction values
-        let temp_frac = TemperatureFraction::from(0x00); // 0.00°C
-        assert_eq!(temp_frac.temperature_fraction(), 0x00);
+        let temp_frac = TemperatureFraction::from(0x00); // 0.00°C (bits 7-6 are 00)
+        assert_eq!(temp_frac.temperature_fraction(), 0b00); // Getter returns the 2-bit value
         assert_eq!(u8::from(temp_frac), 0x00);
 
-        let temp_frac = TemperatureFraction::from(0x40); // 0.25°C
-        assert_eq!(temp_frac.temperature_fraction(), 0x40);
+        let temp_frac = TemperatureFraction::from(0x40); // 0.25°C (bits 7-6 are 01)
+        assert_eq!(temp_frac.temperature_fraction(), 0b01); // Getter returns the 2-bit value
         assert_eq!(u8::from(temp_frac), 0x40);
 
-        let temp_frac = TemperatureFraction::from(0x80); // 0.50°C
-        assert_eq!(temp_frac.temperature_fraction(), 0x80);
+        let temp_frac = TemperatureFraction::from(0x80); // 0.50°C (bits 7-6 are 10)
+        assert_eq!(temp_frac.temperature_fraction(), 0b10); // Getter returns the 2-bit value
         assert_eq!(u8::from(temp_frac), 0x80);
 
-        let temp_frac = TemperatureFraction::from(0xC0); // 0.75°C
-        assert_eq!(temp_frac.temperature_fraction(), 0xC0);
+        let temp_frac = TemperatureFraction::from(0xC0); // 0.75°C (bits 7-6 are 11)
+        assert_eq!(temp_frac.temperature_fraction(), 0b11); // Getter returns the 2-bit value
         assert_eq!(u8::from(temp_frac), 0xC0);
 
-        // Test arbitrary value
-        let temp_frac = TemperatureFraction::from(0x55);
-        assert_eq!(temp_frac.temperature_fraction(), 0x55);
-        assert_eq!(u8::from(temp_frac), 0x55);
+        // Test arbitrary value to ensure only relevant bits are used by getter
+        // and other bits are ignored by getter but preserved by From<u8>/Into<u8>
+        let temp_frac_arbitrary = TemperatureFraction::from(0x55); // 0b01010101, bits 7-6 are 01
+        assert_eq!(temp_frac_arbitrary.temperature_fraction(), 0b01); // Should be 1 (0.25°C)
+        assert_eq!(u8::from(temp_frac_arbitrary), 0x55); // Raw byte preserved
+
+        // Test setting the fraction and converting back to u8
+        let mut temp_frac_setter = TemperatureFraction::default(); // Starts at 0x00
+        temp_frac_setter.set_temperature_fraction(0b10); // Set fraction to 0.50°C (binary 10)
+                                                         // The setter places 0b10 into bits 7-6. So the raw byte should be 0b10000000 = 0x80
+        assert_eq!(u8::from(temp_frac_setter), 0x80);
+        assert_eq!(temp_frac_setter.temperature_fraction(), 0b10);
+
+        temp_frac_setter.set_temperature_fraction(0b01); // Set fraction to 0.25°C (binary 01)
+                                                         // Raw byte should be 0b01000000 = 0x40
+        assert_eq!(u8::from(temp_frac_setter), 0x40);
+        assert_eq!(temp_frac_setter.temperature_fraction(), 0b01);
     }
 
     #[test]

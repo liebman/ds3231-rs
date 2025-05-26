@@ -2,9 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [ '*' ]
+    branches:
+      - main
   pull_request:
-    branches: [ '*' ]
+    branches:
+      - main
 
 env:
   CARGO_TERM_COLOR: always
@@ -91,6 +93,11 @@ jobs:
   examples:
     name: Examples
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        example:
+          - esp-alarm
+          - esp-temperature
     steps:
       - uses: actions/checkout@v4
       
@@ -103,14 +110,14 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
       
-      - name: Check formatting of esp-alarm example
-        run: cd examples/esp-alarm && cargo fmt --all -- --check
+      - name: Check formatting of ${{ matrix.example }} example
+        run: cd examples/${{ matrix.example }} && cargo fmt --all -- --check
       
-      - name: Build esp-alarm example
-        run: cd examples/esp-alarm && cargo build
+      - name: Build ${{ matrix.example }} example
+        run: cd examples/${{ matrix.example }} && cargo build
       
-      - name: Run clippy on esp-alarm example
-        run: cd examples/esp-alarm && cargo clippy -- -D warnings
+      - name: Run clippy on ${{ matrix.example }} example
+        run: cd examples/${{ matrix.example }} && cargo clippy -- -D warnings
 
   # Coverage analysis
   coverage:
@@ -133,13 +140,13 @@ jobs:
           tool: cargo-llvm-cov
       
       - name: Generate coverage (blocking)
-        run: cargo llvm-cov --no-report test
+        run: cargo llvm-cov --no-report test --features temperature_f32
       - name: Generate coverage (blocking,log)
-        run: cargo llvm-cov --no-report test --features log
+        run: cargo llvm-cov --no-report test --features "log,temperature_f32"
       - name: Generate coverage (async)
-        run: cargo llvm-cov --no-report test --features "async"
+        run: cargo llvm-cov --no-report test --features "async,temperature_f32"
       - name: Generate coverage (async,log)
-        run: cargo llvm-cov --no-report test --features "async,log"
+        run: cargo llvm-cov --no-report test --features "async,log,temperature_f32"
       
       - name: Generate coverage report
         run: cargo llvm-cov report --lcov --output-path lcov.info
