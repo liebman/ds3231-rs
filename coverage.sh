@@ -12,11 +12,11 @@ cargo llvm-cov clean
 
 # Run coverage for blocking implementation (default features)
 echo "📊 Testing blocking implementation..."
-cargo llvm-cov --no-report test
+cargo llvm-cov --no-report test --features temperature_f32
 
 # Run coverage for async implementation
 echo "📊 Testing async implementation..."
-cargo llvm-cov --no-report test --features async
+cargo llvm-cov --no-report test --features async,temperature_f32
 
 # Generate coverage reports
 echo "📋 Generating coverage reports..."

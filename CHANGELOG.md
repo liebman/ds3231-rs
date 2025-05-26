@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- New `temperature_f32` feature to read temperature as an `f32` value.
+
 ### Changed
 
 - Use maybe-async-cfg to support async vs the default sync operation
 - Improved alarm support (#4)
+- temperature_fraction() now just returns the 2 active bits.
 
 ### Deprecated
 
