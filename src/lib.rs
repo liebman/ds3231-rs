@@ -596,6 +596,7 @@ where
     );
 }
 
+#[maybe_async_cfg::maybe(sync(cfg(not(feature = "async"))), async(feature = "async", keep_self))]
 #[cfg(test)]
 mod tests {
     extern crate alloc;
@@ -619,10 +620,6 @@ mod tests {
         _dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_read_control() {
@@ -640,10 +637,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_write_control() {
@@ -661,10 +654,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_configure() {
@@ -692,10 +681,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_read_datetime() {
@@ -727,10 +712,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_set_datetime() {
@@ -758,10 +739,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_register_operations() {
@@ -801,10 +778,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_read_temperature() {
@@ -833,10 +806,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_alarm_registers() {
@@ -910,10 +879,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_status_register_flags() {
@@ -978,10 +943,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_alarm1_high_level_operations() {
@@ -1043,10 +1004,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_alarm2_high_level_operations() {
@@ -1099,10 +1056,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_alarm_error_handling() {
@@ -1131,10 +1084,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_datetime_error_handling() {
@@ -1351,10 +1300,6 @@ mod tests {
         assert_eq!(alarm_day_date.day_or_date(), 5);
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_comprehensive_register_coverage() {
@@ -1458,10 +1403,6 @@ mod tests {
         let _formatted = defmt::Debug2Format(&control);
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_twelve_hour_mode_datetime() {
@@ -1580,10 +1521,6 @@ mod tests {
         assert!(matches!(ds3231_error, DS3231Error::I2c(MockI2cError)));
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_individual_registers() {
@@ -1634,10 +1571,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_twelve_hour_mode() {
@@ -1666,10 +1599,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_read_alarm_mask_bits_and_dydt() {
@@ -1734,10 +1663,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[maybe_async_cfg::maybe(
-        sync(cfg(not(feature = "async"))),
-        async(feature = "async", keep_self)
-    )]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
     async fn test_write_alarm_mask_bits_and_dydt() {
