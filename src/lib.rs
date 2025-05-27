@@ -192,7 +192,7 @@ impl<I2CE> From<I2CE> for DS3231Error<I2CE> {
 pub struct DS3231<I2C> {
     i2c: I2C,
     address: u8,
-    time_representation: TimeRepresentation,
+    time_representation: Option<TimeRepresentation>,
 }
 
 // Register access implementations
@@ -286,7 +286,7 @@ where
         Self {
             i2c,
             address,
-            time_representation: TimeRepresentation::TwentyFourHour,
+            time_representation: None,
         }
     }
 
@@ -314,7 +314,7 @@ where
         let mut hours = self.hour().await?;
         hours.set_time_representation(config.time_representation);
         self.set_hour(hours).await?;
-        self.time_representation = config.time_representation;
+        self.time_representation = Some(config.time_representation);
         Ok(())
     }
 
@@ -386,7 +386,15 @@ where
     /// * Returns `DS3231Error::I2c` if there is an I2C communication error
     /// * Returns `DS3231Error::DateTime` if the provided datetime is invalid for the device
     pub async fn set_datetime(&mut self, datetime: &NaiveDateTime) -> Result<(), DS3231Error<E>> {
-        let raw = DS3231DateTime::from_datetime(datetime, self.time_representation)
+        let time_representation = if let Some(repr) = self.time_representation {
+            repr
+        } else {
+            // Read the hours register to determine the current time representation
+            let hours = self.hour().await?;
+            hours.time_representation()
+        };
+
+        let raw = DS3231DateTime::from_datetime(datetime, time_representation)
             .map_err(DS3231Error::DateTime)?;
         self.write_raw_datetime(raw).await?;
         Ok(())
@@ -573,10 +581,54 @@ where
         Ok(())
     }
 
+    /// Gets the value of the hour register and caches the time representation.
+    ///
+    /// # Returns
+    /// * `Ok(Hours)` - The register value on success
+    /// * `Err(DS3231Error)` on error
+    ///
+    /// # Errors
+    /// Returns `DS3231Error::I2c` if there is an I2C communication error
+    pub async fn hour(&mut self) -> Result<Hours, DS3231Error<E>> {
+        let mut data = [0];
+        self.i2c
+            .write_read(self.address, &[RegAddr::Hours as u8], &mut data)
+            .await?;
+        let hours = Hours(data[0]);
+
+        // Cache the time representation if not already cached
+        if self.time_representation.is_none() {
+            self.time_representation = Some(hours.time_representation());
+        }
+
+        Ok(hours)
+    }
+
+    /// Sets the value of the hour register and caches the time representation.
+    ///
+    /// # Arguments
+    /// * `value` - The value to write to the hour register
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err(DS3231Error)` on error
+    ///
+    /// # Errors
+    /// Returns `DS3231Error::I2c` if there is an I2C communication error
+    pub async fn set_hour(&mut self, value: Hours) -> Result<(), DS3231Error<E>> {
+        self.i2c
+            .write(self.address, &[RegAddr::Hours as u8, value.into()])
+            .await?;
+
+        // Cache the time representation
+        self.time_representation = Some(value.time_representation());
+
+        Ok(())
+    }
+
     impl_register_access!(
         (second, RegAddr::Seconds, Seconds),
         (minute, RegAddr::Minutes, Minutes),
-        (hour, RegAddr::Hours, Hours),
         (day, RegAddr::Day, Day),
         (date, RegAddr::Date, Date),
         (month, RegAddr::Month, Month),
@@ -731,6 +783,11 @@ mod tests {
 
         let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
         dev.configure(&config).await.unwrap();
+        // After configure, time_representation should be cached
+        assert_eq!(
+            dev.time_representation,
+            Some(TimeRepresentation::TwentyFourHour)
+        );
         dev.i2c.done();
     }
 
@@ -773,19 +830,27 @@ mod tests {
             .and_hms_opt(15, 30, 0)
             .unwrap();
 
-        let mock = setup_mock(&[I2cTrans::write(
-            DEVICE_ADDRESS,
-            vec![
-                RegAddr::Seconds as u8,
-                0x00, // seconds
-                0x30, // minutes (BCD for 30)
-                0x15, // hours (BCD for 15 in 24-hour mode)
-                0x04, // day (Thursday)
-                0x14, // date
-                0x03, // month
-                0x24, // year
-            ],
-        )]);
+        let mock = setup_mock(&[
+            // First, read the hours register to get the time representation
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Hours as u8],
+                vec![0x15], // 24-hour mode (bit 6 = 0)
+            ),
+            I2cTrans::write(
+                DEVICE_ADDRESS,
+                vec![
+                    RegAddr::Seconds as u8,
+                    0x00, // seconds
+                    0x30, // minutes (BCD for 30)
+                    0x15, // hours (BCD for 15 in 24-hour mode)
+                    0x04, // day (Thursday)
+                    0x14, // date
+                    0x03, // month
+                    0x24, // year
+                ],
+            ),
+        ]);
         let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
 
         dev.set_datetime(&dt).await.unwrap();
@@ -1801,7 +1866,10 @@ mod tests {
 
         let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
         dev.configure(&config).await.unwrap();
-        assert_eq!(dev.time_representation, TimeRepresentation::TwelveHour);
+        assert_eq!(
+            dev.time_representation,
+            Some(TimeRepresentation::TwelveHour)
+        );
         dev.i2c.done();
     }
 
@@ -1935,5 +2003,165 @@ mod tests {
         let alarm_error: DS3231Error<()> = DS3231Error::Alarm(AlarmError::InvalidTime("test"));
         let debug_str = alloc::format!("{:?}", alarm_error);
         assert!(debug_str.contains("Alarm"));
+    }
+
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_set_datetime_reads_time_representation_once() {
+        let dt1 = NaiveDate::from_ymd_opt(2024, 3, 14)
+            .unwrap()
+            .and_hms_opt(15, 30, 0)
+            .unwrap();
+        let dt2 = NaiveDate::from_ymd_opt(2024, 3, 15)
+            .unwrap()
+            .and_hms_opt(16, 45, 0)
+            .unwrap();
+
+        let mock = setup_mock(&[
+            // First call: read the hours register to get the time representation
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Hours as u8],
+                vec![0x15], // 24-hour mode (bit 6 = 0)
+            ),
+            I2cTrans::write(
+                DEVICE_ADDRESS,
+                vec![
+                    RegAddr::Seconds as u8,
+                    0x00, // seconds
+                    0x30, // minutes (BCD for 30)
+                    0x15, // hours (BCD for 15 in 24-hour mode)
+                    0x04, // day (Thursday)
+                    0x14, // date
+                    0x03, // month
+                    0x24, // year
+                ],
+            ),
+            // Second call: should NOT read hours register again, just write
+            I2cTrans::write(
+                DEVICE_ADDRESS,
+                vec![
+                    RegAddr::Seconds as u8,
+                    0x00, // seconds
+                    0x45, // minutes (BCD for 45)
+                    0x16, // hours (BCD for 16 in 24-hour mode)
+                    0x05, // day (Friday)
+                    0x15, // date
+                    0x03, // month
+                    0x24, // year
+                ],
+            ),
+        ]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        // First call should read the hours register
+        dev.set_datetime(&dt1).await.unwrap();
+        assert_eq!(
+            dev.time_representation,
+            Some(TimeRepresentation::TwentyFourHour)
+        );
+
+        // Second call should NOT read the hours register again
+        dev.set_datetime(&dt2).await.unwrap();
+        assert_eq!(
+            dev.time_representation,
+            Some(TimeRepresentation::TwentyFourHour)
+        );
+
+        dev.i2c.done();
+    }
+
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_set_datetime_detects_twelve_hour_mode() {
+        let dt = NaiveDate::from_ymd_opt(2024, 3, 14)
+            .unwrap()
+            .and_hms_opt(15, 30, 0)
+            .unwrap();
+
+        let mock = setup_mock(&[
+            // Read the hours register to get the time representation
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Hours as u8],
+                vec![0x63], // 12-hour mode (bit 6 = 1) with 3 PM (0x03 + PM bit)
+            ),
+            I2cTrans::write(
+                DEVICE_ADDRESS,
+                vec![
+                    RegAddr::Seconds as u8,
+                    0x00, // seconds
+                    0x30, // minutes (BCD for 30)
+                    0x63, // hours (BCD for 3 PM in 12-hour mode)
+                    0x04, // day (Thursday)
+                    0x14, // date
+                    0x03, // month
+                    0x24, // year
+                ],
+            ),
+        ]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        dev.set_datetime(&dt).await.unwrap();
+        assert_eq!(
+            dev.time_representation,
+            Some(TimeRepresentation::TwelveHour)
+        );
+        dev.i2c.done();
+    }
+
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_hour_caches_time_representation() {
+        let mock = setup_mock(&[I2cTrans::write_read(
+            DEVICE_ADDRESS,
+            vec![RegAddr::Hours as u8],
+            vec![0x63], // 12-hour mode (bit 6 = 1) with 3 PM
+        )]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        // Initially, time_representation should be None
+        assert_eq!(dev.time_representation, None);
+
+        // Call hour() which should cache the time representation
+        let hours = dev.hour().await.unwrap();
+        assert_eq!(hours.time_representation(), TimeRepresentation::TwelveHour);
+
+        // Now time_representation should be cached
+        assert_eq!(
+            dev.time_representation,
+            Some(TimeRepresentation::TwelveHour)
+        );
+
+        dev.i2c.done();
+    }
+
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_set_hour_caches_time_representation() {
+        let mut hours = Hours::default();
+        hours.set_time_representation(TimeRepresentation::TwelveHour);
+        hours.set_hours(3);
+        hours.set_pm_or_twenty_hours(1); // PM
+
+        let mock = setup_mock(&[I2cTrans::write(
+            DEVICE_ADDRESS,
+            vec![RegAddr::Hours as u8, hours.0],
+        )]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        // Initially, time_representation should be None
+        assert_eq!(dev.time_representation, None);
+
+        // Call set_hour() which should cache the time representation
+        dev.set_hour(hours).await.unwrap();
+
+        // Now time_representation should be cached
+        assert_eq!(
+            dev.time_representation,
+            Some(TimeRepresentation::TwelveHour)
+        );
+
+        dev.i2c.done();
     }
 }

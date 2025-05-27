@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Don't assume 24hr time representation (#7)
+
 ### Security
 
 ## [0.1.0]
