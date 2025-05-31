@@ -6,4 +6,5 @@
 *.profraw
 *.profdata
 lcov.info
+*.code-workspace
 default.profraw

@@ -605,6 +605,28 @@ mod tests {
         assert_eq!(dt.hour(), 14); // 2 PM = 14:00 in 24-hour
         assert_eq!(dt.minute(), 45);
         assert_eq!(dt.second(), 30);
+
+        // test 2 AM
+        raw.hours.set_pm_or_twenty_hours(0); // AM
+        raw.hours.set_ten_hours(0); // For hour 2, tens digit is 0
+        raw.hours.set_hours(2); // Hour 2
+
+        let dt = raw.into_datetime().unwrap();
+        assert_eq!(dt.hour(), 2); // 2 PM = 14:00 in 24-hour
+
+        // test midnight
+        raw.hours.set_pm_or_twenty_hours(0); // AM
+        raw.hours.set_ten_hours(1);
+        raw.hours.set_hours(2);
+        let dt = raw.into_datetime().unwrap();
+        assert_eq!(dt.hour(), 0); // 12 AM = 00:00 in 24-hour
+
+        // test noon
+        raw.hours.set_pm_or_twenty_hours(1); // PM
+        raw.hours.set_ten_hours(1);
+        raw.hours.set_hours(2);
+        let dt = raw.into_datetime().unwrap();
+        assert_eq!(dt.hour(), 12); // 12 PM = 12:00 in 24-hour
     }
 
     #[test]

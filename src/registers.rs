@@ -694,6 +694,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_day_date_select_conversions() {
+        // Test DayDateSelect conversions
+        assert_eq!(DayDateSelect::from(0), DayDateSelect::Date);
+        assert_eq!(DayDateSelect::from(1), DayDateSelect::Day);
+        assert_eq!(u8::from(DayDateSelect::Date), 0);
+        assert_eq!(u8::from(DayDateSelect::Day), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid value for DayDateSelect: 2")]
+    fn test_invalid_day_date_select_conversion() {
+        let _ = DayDateSelect::from(2);
+    }
+
+    #[test]
     fn test_seconds_register_conversions() {
         // Test valid BCD values
         let seconds = Seconds::from(0x59); // 59 seconds
@@ -1147,5 +1162,191 @@ mod tests {
             assert_eq!(u8::from(AlarmHours::from(value)), value);
             assert_eq!(u8::from(AlarmDayDate::from(value)), value);
         }
+    }
+
+    #[test]
+    fn test_register_bitfield_operations() {
+        // Test Seconds register
+        let mut seconds = Seconds::default();
+        seconds.set_seconds(5);
+        seconds.set_ten_seconds(3);
+        assert_eq!(seconds.seconds(), 5);
+        assert_eq!(seconds.ten_seconds(), 3);
+
+        // Test Minutes register
+        let mut minutes = Minutes::default();
+        minutes.set_minutes(8);
+        minutes.set_ten_minutes(4);
+        assert_eq!(minutes.minutes(), 8);
+        assert_eq!(minutes.ten_minutes(), 4);
+
+        // Test Hours register
+        let mut hours = Hours::default();
+        hours.set_time_representation(TimeRepresentation::TwelveHour);
+        hours.set_pm_or_twenty_hours(1);
+        hours.set_ten_hours(1);
+        hours.set_hours(2);
+        assert_eq!(hours.time_representation(), TimeRepresentation::TwelveHour);
+        assert_eq!(hours.pm_or_twenty_hours(), 1);
+        assert_eq!(hours.ten_hours(), 1);
+        assert_eq!(hours.hours(), 2);
+
+        // Test Day register
+        let mut day = Day::default();
+        day.set_day(3);
+        assert_eq!(day.day(), 3);
+
+        // Test Date register
+        let mut date = Date::default();
+        date.set_date(5);
+        date.set_ten_date(2);
+        assert_eq!(date.date(), 5);
+        assert_eq!(date.ten_date(), 2);
+
+        // Test Month register
+        let mut month = Month::default();
+        month.set_month(2);
+        month.set_ten_month(1);
+        month.set_century(true);
+        assert_eq!(month.month(), 2);
+        assert_eq!(month.ten_month(), 1);
+        assert!(month.century());
+
+        // Test Year register
+        let mut year = Year::default();
+        year.set_year(4);
+        year.set_ten_year(2);
+        assert_eq!(year.year(), 4);
+        assert_eq!(year.ten_year(), 2);
+
+        // Test Control register
+        let mut control = Control::default();
+        control.set_oscillator_enable(Ocillator::Disabled);
+        control.set_battery_backed_square_wave(true);
+        control.set_convert_temperature(true);
+        control.set_square_wave_frequency(SquareWaveFrequency::Hz4096);
+        control.set_interrupt_control(InterruptControl::Interrupt);
+        control.set_alarm2_interrupt_enable(true);
+        control.set_alarm1_interrupt_enable(true);
+
+        assert_eq!(control.oscillator_enable(), Ocillator::Disabled);
+        assert!(control.battery_backed_square_wave());
+        assert!(control.convert_temperature());
+        assert_eq!(control.square_wave_frequency(), SquareWaveFrequency::Hz4096);
+        assert_eq!(control.interrupt_control(), InterruptControl::Interrupt);
+        assert!(control.alarm2_interrupt_enable());
+        assert!(control.alarm1_interrupt_enable());
+
+        // Test Status register
+        let mut status = Status::default();
+        status.set_oscillator_stop_flag(true);
+        status.set_enable_32khz_output(true);
+        status.set_busy(true);
+        status.set_alarm2_flag(true);
+        status.set_alarm1_flag(true);
+
+        assert!(status.oscillator_stop_flag());
+        assert!(status.enable_32khz_output());
+        assert!(status.busy());
+        assert!(status.alarm2_flag());
+        assert!(status.alarm1_flag());
+
+        // Test AgingOffset register
+        let mut aging_offset = AgingOffset::default();
+        aging_offset.set_aging_offset(-10);
+        assert_eq!(aging_offset.aging_offset(), -10);
+
+        // Test Temperature register
+        let mut temperature = Temperature::default();
+        temperature.set_temperature(25);
+        assert_eq!(temperature.temperature(), 25);
+
+        // Test TemperatureFraction register
+        let mut temp_frac = TemperatureFraction::default(); // default is 0x00
+                                                            // The setter `set_temperature_fraction` expects the 2-bit value (0, 1, 2, or 3).
+                                                            // To set 0.25°C (which is bits 7-6 = 01), we pass 0b01 to the setter.
+        temp_frac.set_temperature_fraction(0b01);
+        // The getter `temperature_fraction()` should then return this 2-bit value (0b01).
+        assert_eq!(temp_frac.temperature_fraction(), 0b01);
+        // The raw u8 value of temp_frac should be 0b01000000 = 0x40, because set_temperature_fraction(0b01)
+        // places 01 into bits 7-6.
+        assert_eq!(u8::from(temp_frac), 0x40);
+
+        // Test setting another value, e.g., 0.75°C (bits 7-6 = 11)
+        temp_frac.set_temperature_fraction(0b11);
+        assert_eq!(temp_frac.temperature_fraction(), 0b11); // Getter returns 3
+        assert_eq!(u8::from(temp_frac), 0xC0); // Raw u8 should be 0b11000000
+    }
+
+    #[test]
+    fn test_alarm_register_bitfield_operations() {
+        // Test AlarmSeconds register
+        let mut alarm_seconds = AlarmSeconds::default();
+        alarm_seconds.set_alarm_mask1(true);
+        alarm_seconds.set_ten_seconds(3);
+        alarm_seconds.set_seconds(5);
+        assert!(alarm_seconds.alarm_mask1());
+        assert_eq!(alarm_seconds.ten_seconds(), 3);
+        assert_eq!(alarm_seconds.seconds(), 5);
+
+        // Test AlarmMinutes register
+        let mut alarm_minutes = AlarmMinutes::default();
+        alarm_minutes.set_alarm_mask2(true);
+        alarm_minutes.set_ten_minutes(4);
+        alarm_minutes.set_minutes(8);
+        assert!(alarm_minutes.alarm_mask2());
+        assert_eq!(alarm_minutes.ten_minutes(), 4);
+        assert_eq!(alarm_minutes.minutes(), 8);
+
+        // Test AlarmHours register
+        let mut alarm_hours = AlarmHours::default();
+        alarm_hours.set_alarm_mask3(true);
+        alarm_hours.set_time_representation(TimeRepresentation::TwelveHour);
+        alarm_hours.set_pm_or_twenty_hours(1);
+        alarm_hours.set_ten_hours(1);
+        alarm_hours.set_hours(2);
+        assert!(alarm_hours.alarm_mask3());
+        assert_eq!(
+            alarm_hours.time_representation(),
+            TimeRepresentation::TwelveHour
+        );
+        assert_eq!(alarm_hours.pm_or_twenty_hours(), 1);
+        assert_eq!(alarm_hours.ten_hours(), 1);
+        assert_eq!(alarm_hours.hours(), 2);
+
+        // Test AlarmDayDate register
+        let mut alarm_day_date = AlarmDayDate::default();
+        alarm_day_date.set_alarm_mask4(true);
+        alarm_day_date.set_day_date_select(DayDateSelect::Day);
+        alarm_day_date.set_ten_date(2);
+        alarm_day_date.set_day_or_date(5);
+        assert!(alarm_day_date.alarm_mask4());
+        assert_eq!(alarm_day_date.day_date_select(), DayDateSelect::Day);
+        assert_eq!(alarm_day_date.ten_date(), 2);
+        assert_eq!(alarm_day_date.day_or_date(), 5);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid value for TimeRepresentation: 2")]
+    fn test_invalid_time_representation_conversion() {
+        let _ = TimeRepresentation::from(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid value for Ocillator: 2")]
+    fn test_invalid_oscillator_conversion() {
+        let _ = Ocillator::from(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid value for InterruptControl: 2")]
+    fn test_invalid_interrupt_control_conversion() {
+        let _ = InterruptControl::from(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid value for SquareWaveFrequency: 4")]
+    fn test_invalid_square_wave_frequency_conversion() {
+        let _ = SquareWaveFrequency::from(4);
     }
 }
