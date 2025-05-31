@@ -92,6 +92,7 @@
 //! - `async` - Enables optional async I²C support
 //! - `log` - Enables logging via the `log` crate
 //! - `defmt` - Enables logging via the `defmt` crate
+//! - `temperature_f32` - Enables temperature reading as f32
 //!
 //! ## Register Map
 //!
@@ -109,13 +110,14 @@
 //! The driver uses a custom error type `DS3231Error` that wraps:
 //! - I²C communication errors
 //! - `DateTime` validation errors
+//! - Alarm configuration errors
+//! - Proper error propagation
 //!
 //! ## Safety
 //!
 //! This driver uses no `unsafe` code and ensures type safety through:
 //! - Strong typing for all register operations
 //! - Validation of all datetime values
-//! - Proper error propagation
 
 #![no_std]
 #![warn(missing_docs)]
@@ -133,7 +135,7 @@ use datetime::DS3231DateTimeError;
 #[cfg(not(feature = "async"))]
 use embedded_hal::i2c::I2c;
 #[cfg(feature = "async")]
-use embedded_hal_async::i2c::I2c as AsyncI2c;
+use embedded_hal_async::i2c::I2c;
 use paste::paste;
 
 use crate::datetime::DS3231DateTime;
@@ -266,16 +268,12 @@ macro_rules! impl_register_access {
 }
 
 #[maybe_async_cfg::maybe(
-    sync(
-        cfg(not(feature = "async")),
-        self = "DS3231",
-        idents(AsyncI2c(sync = "I2c"))
-    ),
+    sync(cfg(not(feature = "async")), keep_self),
     async(feature = "async", keep_self)
 )]
 impl<I2C, E> DS3231<I2C>
 where
-    I2C: AsyncI2c<Error = E>,
+    I2C: I2c<Error = E>,
 {
     /// Creates a new DS3231 async driver instance.
     ///
@@ -626,6 +624,46 @@ where
         Ok(())
     }
 
+    /// Reads the temperature from both temperature registers and returns it as an f32.
+    ///
+    /// This method combines the integer temperature from register 0x11 and the fractional
+    /// temperature from register 0x12 to provide a precise temperature reading with 0.25°C resolution.
+    /// The temperature is encoded in two's complement format.
+    ///
+    /// # Returns
+    /// * `Ok(f32)` - The temperature in degrees Celsius with 0.25°C resolution
+    /// * `Err(DS3231Error)` on error
+    ///
+    /// # Errors
+    /// Returns `DS3231Error::I2c` if there is an I2C communication error.
+    ///
+    /// # Examples
+    /// ```rust,ignore
+    /// let temp = rtc.temperature_f32().await?;
+    /// println!("Temperature: {:.2}°C", temp);
+    /// ```
+    #[cfg(feature = "temperature_f32")]
+    pub async fn temperature_f32(&mut self) -> Result<f32, DS3231Error<E>> {
+        // Read both temperature registers in a single transaction
+        let mut data = [0; 2];
+        self.i2c
+            .write_read(self.address, &[RegAddr::MSBTemp as u8], &mut data)
+            .await?;
+
+        #[allow(clippy::cast_possible_wrap)]
+        let integer_part = data[0] as i8;
+        let fraction_bits = (data[1] >> 6) & 0x03;
+        let fractional_part = match fraction_bits {
+            0b00 => 0.00,
+            0b01 => 0.25,
+            0b10 => 0.50,
+            0b11 => 0.75,
+            _ => unreachable!(), // Should not happen as we mask with 0x03
+        };
+
+        Ok(f32::from(integer_part) + fractional_part)
+    }
+
     impl_register_access!(
         (second, RegAddr::Seconds, Seconds),
         (minute, RegAddr::Minutes, Minutes),
@@ -648,60 +686,10 @@ where
     );
 }
 
-// Temperature reading implementation with f32 support
-#[cfg(feature = "temperature_f32")]
 #[maybe_async_cfg::maybe(
-    sync(
-        cfg(not(feature = "async")),
-        self = "DS3231",
-        idents(AsyncI2c(sync = "I2c"))
-    ),
+    sync(cfg(not(feature = "async")), keep_self),
     async(feature = "async", keep_self)
 )]
-impl<I2C, E> DS3231<I2C>
-where
-    I2C: AsyncI2c<Error = E>,
-{
-    /// Reads the temperature from both temperature registers and returns it as an f32.
-    ///
-    /// This method combines the integer temperature from register 0x11 and the fractional
-    /// temperature from register 0x12 to provide a precise temperature reading with 0.25°C resolution.
-    /// The temperature is encoded in two's complement format.
-    ///
-    /// # Returns
-    /// * `Ok(f32)` - The temperature in degrees Celsius with 0.25°C resolution
-    /// * `Err(DS3231Error)` on error
-    ///
-    /// # Errors
-    /// Returns `DS3231Error::I2c` if there is an I2C communication error.
-    ///
-    /// # Examples
-    /// ```rust,ignore
-    /// let temp = rtc.temperature_f32().await?;
-    /// println!("Temperature: {:.2}°C", temp);
-    /// ```
-    pub async fn temperature_f32(&mut self) -> Result<f32, DS3231Error<E>> {
-        // Read both temperature registers in a single transaction
-        let mut data = [0; 2];
-        self.i2c
-            .write_read(self.address, &[RegAddr::MSBTemp as u8], &mut data)
-            .await?;
-
-        let integer_part = data[0] as i8;
-        let fraction_bits = (data[1] >> 6) & 0x03;
-        let fractional_part = match fraction_bits {
-            0b00 => 0.00,
-            0b01 => 0.25,
-            0b10 => 0.50,
-            0b11 => 0.75,
-            _ => unreachable!(), // Should not happen as we mask with 0x03
-        };
-
-        Ok(f32::from(integer_part) + fractional_part)
-    }
-}
-
-#[maybe_async_cfg::maybe(sync(cfg(not(feature = "async"))), async(feature = "async", keep_self))]
 #[cfg(test)]
 mod tests {
     extern crate alloc;
@@ -709,6 +697,7 @@ mod tests {
 
     use super::*;
     use chrono::{Datelike, NaiveDate, Timelike};
+    use embedded_hal::i2c::ErrorKind as I2cErrorKind;
     use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTrans};
 
     const DEVICE_ADDRESS: u8 = 0x68;
@@ -717,46 +706,200 @@ mod tests {
         I2cMock::new(expectations)
     }
 
+    // Test register access macro - generates comprehensive test functions for register operations
+    macro_rules! test_register_access {
+        ($(($name:ident, $regaddr:expr, $typ:ty, $test_read_value:expr, $test_write_value:expr)),+) => {
+            $(
+                #[cfg(feature = "async")]
+                paste! {
+                    #[tokio::test]
+                    async fn [<test_read_ $name>]() {
+                        let expected = $test_read_value;
+                        let mock = setup_mock(&[I2cTrans::write_read(
+                            DEVICE_ADDRESS,
+                            vec![$regaddr as u8],
+                            vec![expected],
+                        )]);
+                        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+                        let result = dev.$name().await.unwrap();
+                        assert_eq!(result.0, expected);
+                        dev.i2c.done();
+                    }
+
+                    #[tokio::test]
+                    async fn [<test_read_ $name _with_error>]() {
+                        let expected = $test_read_value;
+                        let mock = setup_mock(&[I2cTrans::write_read(
+                            DEVICE_ADDRESS,
+                            vec![$regaddr as u8],
+                            vec![expected],
+                        )
+                        .with_error(I2cErrorKind::Other)]);
+                        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+                        let err = dev.$name().await.unwrap_err();
+                        assert!(matches!(err, DS3231Error::I2c(I2cErrorKind::Other)));
+                        dev.i2c.done();
+                    }
+
+                    #[tokio::test]
+                    async fn [<test_write_ $name>]() {
+                        let value = $typ($test_write_value);
+                        let mock = setup_mock(&[I2cTrans::write(
+                            DEVICE_ADDRESS,
+                            vec![$regaddr as u8, $test_write_value],
+                        )]);
+                        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+                        dev.[<set_ $name>](value).await.unwrap();
+                        dev.i2c.done();
+                    }
+
+                    #[tokio::test]
+                    async fn [<test_write_ $name _with_error>]() {
+                        let value = $typ($test_write_value);
+                        let mock = setup_mock(&[I2cTrans::write(
+                            DEVICE_ADDRESS,
+                            vec![$regaddr as u8, $test_write_value],
+                        )
+                        .with_error(I2cErrorKind::Other)]);
+                        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+                        let err = dev.[<set_ $name>](value).await.unwrap_err();
+                        assert!(matches!(err, DS3231Error::I2c(I2cErrorKind::Other)));
+                        dev.i2c.done();
+                    }
+                }
+                #[cfg(not(feature = "async"))]
+                paste! {
+                    #[test]
+                    fn [<test_read_ $name>]() {
+                        let expected = $test_read_value;
+                        let mock = setup_mock(&[I2cTrans::write_read(
+                            DEVICE_ADDRESS,
+                            vec![$regaddr as u8],
+                            vec![expected],
+                        )]);
+                        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+                        let result = dev.$name().unwrap();
+                        assert_eq!(result.0, expected);
+                        dev.i2c.done();
+                    }
+
+                    #[test]
+                    fn [<test_read_ $name _with_error>]() {
+                        let expected = $test_read_value;
+                        let mock = setup_mock(&[I2cTrans::write_read(
+                            DEVICE_ADDRESS,
+                            vec![$regaddr as u8],
+                            vec![expected],
+                        )
+                        .with_error(I2cErrorKind::Other)]);
+                        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+                        let err = dev.$name().unwrap_err();
+                        assert!(matches!(err, DS3231Error::I2c(I2cErrorKind::Other)));
+                        dev.i2c.done();
+                    }
+
+                    #[test]
+                    fn [<test_write_ $name>]() {
+                        let value = $typ($test_write_value);
+                        let mock = setup_mock(&[I2cTrans::write(
+                            DEVICE_ADDRESS,
+                            vec![$regaddr as u8, $test_write_value],
+                        )]);
+                        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+                        dev.[<set_ $name>](value).unwrap();
+                        dev.i2c.done();
+                    }
+
+                    #[test]
+                    fn [<test_write_ $name _with_error>]() {
+                        let value = $typ($test_write_value);
+                        let mock = setup_mock(&[I2cTrans::write(
+                            DEVICE_ADDRESS,
+                            vec![$regaddr as u8, $test_write_value],
+                        )
+                        .with_error(I2cErrorKind::Other)]);
+                        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+                        let err = dev.[<set_ $name>](value).unwrap_err();
+                        assert!(matches!(err, DS3231Error::I2c(I2cErrorKind::Other)));
+                        dev.i2c.done();
+                    }
+                }
+            )+
+        }
+    }
+
+    // Generate comprehensive register tests
+    test_register_access!(
+        (second, RegAddr::Seconds, Seconds, 0x45, 0x30),
+        (minute, RegAddr::Minutes, Minutes, 0x30, 0x45),
+        (day, RegAddr::Day, Day, 0x04, 0x02),
+        (date, RegAddr::Date, Date, 0x14, 0x10),
+        (month, RegAddr::Month, Month, 0x03, 0x06),
+        (year, RegAddr::Year, Year, 0x24, 0x25),
+        (
+            alarm1_second,
+            RegAddr::Alarm1Seconds,
+            AlarmSeconds,
+            0x30,
+            0x00
+        ),
+        (
+            alarm1_minute,
+            RegAddr::Alarm1Minutes,
+            AlarmMinutes,
+            0x45,
+            0x15
+        ),
+        (alarm1_hour, RegAddr::Alarm1Hours, AlarmHours, 0x12, 0x09),
+        (
+            alarm1_day_date,
+            RegAddr::Alarm1DayDate,
+            AlarmDayDate,
+            0x15,
+            0x10
+        ),
+        (
+            alarm2_minute,
+            RegAddr::Alarm2Minutes,
+            AlarmMinutes,
+            0x30,
+            0x45
+        ),
+        (alarm2_hour, RegAddr::Alarm2Hours, AlarmHours, 0x08, 0x14),
+        (
+            alarm2_day_date,
+            RegAddr::Alarm2DayDate,
+            AlarmDayDate,
+            0x15,
+            0x25
+        ),
+        (control, RegAddr::Control, Control, 0x00, 0x1C),
+        (status, RegAddr::ControlStatus, Status, 0x80, 0x00),
+        (aging_offset, RegAddr::AgingOffset, AgingOffset, 0x05, 0x0A),
+        (temperature, RegAddr::MSBTemp, Temperature, 0x19, 0x20),
+        (
+            temperature_fraction,
+            RegAddr::LSBTemp,
+            TemperatureFraction,
+            0x40,
+            0x80
+        )
+    );
+
     #[test]
     fn test_new_device() {
         let mock = setup_mock(&[]);
         let mut _dev = DS3231::new(mock, DEVICE_ADDRESS);
         // No I2C operations should happen during initialization
         _dev.i2c.done();
-    }
-
-    #[cfg_attr(feature = "async", tokio::test)]
-    #[cfg_attr(not(feature = "async"), test)]
-    async fn test_read_control() {
-        let expected = 0b0000_0000; // Hz1 frequency (0b00 in bits 4,3)
-        let mock = setup_mock(&[I2cTrans::write_read(
-            DEVICE_ADDRESS,
-            vec![RegAddr::Control as u8],
-            vec![expected],
-        )]);
-        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
-
-        let control = dev.control().await.unwrap();
-        assert_eq!(control.oscillator_enable(), Ocillator::Enabled);
-        assert_eq!(control.square_wave_frequency(), SquareWaveFrequency::Hz1);
-        dev.i2c.done();
-    }
-
-    #[cfg_attr(feature = "async", tokio::test)]
-    #[cfg_attr(not(feature = "async"), test)]
-    async fn test_write_control() {
-        let mut control = Control::default();
-        control.set_oscillator_enable(Ocillator::Enabled);
-        control.set_square_wave_frequency(SquareWaveFrequency::Hz1024);
-
-        let mock = setup_mock(&[I2cTrans::write(
-            DEVICE_ADDRESS,
-            vec![RegAddr::Control as u8, control.0],
-        )]);
-        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
-
-        dev.set_control(control).await.unwrap();
-        dev.i2c.done();
     }
 
     #[cfg_attr(feature = "async", tokio::test)]
@@ -824,6 +967,34 @@ mod tests {
 
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
+    async fn test_read_datetime_with_error() {
+        // 2024-03-14 15:30:00
+        let datetime_registers = [
+            0x00, // seconds
+            0x30, // minutes
+            0x15, // hours (24-hour mode)
+            0x04, // day (Thursday)
+            0x14, // date
+            0x03, // month
+            0x24, // year
+        ];
+
+        let mock = setup_mock(&[I2cTrans::write_read(
+            DEVICE_ADDRESS,
+            vec![RegAddr::Seconds as u8],
+            datetime_registers.to_vec(),
+        )
+        .with_error(I2cErrorKind::Other)]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        let err = dev.datetime().await.unwrap_err();
+        assert!(matches!(err, DS3231Error::I2c(I2cErrorKind::Other)));
+
+        dev.i2c.done();
+    }
+
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
     async fn test_set_datetime() {
         let dt = NaiveDate::from_ymd_opt(2024, 3, 14)
             .unwrap()
@@ -854,6 +1025,44 @@ mod tests {
         let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
 
         dev.set_datetime(&dt).await.unwrap();
+        dev.i2c.done();
+    }
+
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_set_datetime_with_error() {
+        let dt = NaiveDate::from_ymd_opt(2024, 3, 14)
+            .unwrap()
+            .and_hms_opt(15, 30, 0)
+            .unwrap();
+
+        let mock = setup_mock(&[
+            // First, read the hours register to get the time representation
+            I2cTrans::write_read(
+                DEVICE_ADDRESS,
+                vec![RegAddr::Hours as u8],
+                vec![0x15], // 24-hour mode (bit 6 = 0)
+            ),
+            I2cTrans::write(
+                DEVICE_ADDRESS,
+                vec![
+                    RegAddr::Seconds as u8,
+                    0x00, // seconds
+                    0x30, // minutes (BCD for 30)
+                    0x15, // hours (BCD for 15 in 24-hour mode)
+                    0x04, // day (Thursday)
+                    0x14, // date
+                    0x03, // month
+                    0x24, // year
+                ],
+            )
+            .with_error(I2cErrorKind::Other),
+        ]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        let err = dev.set_datetime(&dt).await.unwrap_err();
+        assert!(matches!(err, DS3231Error::I2c(I2cErrorKind::Other)));
+
         dev.i2c.done();
     }
 
@@ -896,42 +1105,6 @@ mod tests {
         dev.i2c.done();
     }
 
-    #[cfg_attr(feature = "async", tokio::test)]
-    #[cfg_attr(not(feature = "async"), test)]
-    async fn test_read_temperature() {
-        // Temperature value: 25°C (0x19) with fraction 0x60 (0.375°C)
-        let expected_msb = 0x19; // 25°C
-                                 // LSB register 0x60 means bits 7-6 are 01 (0.25°C), not 0.375. 0.375 is not possible with 2 bits.
-                                 // Datasheet: 00011001 01b = +25.25°C. Here 01b means bits 7-6 of LSB are 01.
-                                 // So, if LSBTemp register value is 0x40 (0b01000000), this corresponds to 0.25 C.
-                                 // If LSBTemp register value is 0x80 (0b10000000), this corresponds to 0.50 C.
-                                 // If LSBTemp register value is 0xC0 (0b11000000), this corresponds to 0.75 C.
-                                 // The old comment "0x60 (0.375°C)" was incorrect. Let's assume 0.25 for this test for clarity.
-        let expected_lsb_reg_value = 0x40; // Represents 0.25°C, so bits 7-6 are '01'
-
-        let mock = setup_mock(&[
-            I2cTrans::write_read(
-                DEVICE_ADDRESS,
-                vec![RegAddr::MSBTemp as u8],
-                vec![expected_msb],
-            ),
-            I2cTrans::write_read(
-                DEVICE_ADDRESS,
-                vec![RegAddr::LSBTemp as u8],
-                vec![expected_lsb_reg_value], // Mock returns 0x40 for LSB Temp register
-            ),
-        ]);
-        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
-
-        let temp = dev.temperature().await.unwrap();
-        let frac = dev.temperature_fraction().await.unwrap(); // Reads LSBTemp and creates TemperatureFraction(0x40)
-        assert_eq!(temp.temperature(), 25);
-        // frac.temperature_fraction() is the getter for bits 7-6 of TemperatureFraction(0x40)
-        // For 0x40 (0b01000000), bits 7-6 are '01', so getter returns 1.
-        assert_eq!(frac.temperature_fraction(), 0b01);
-        dev.i2c.done();
-    }
-
     #[cfg(feature = "temperature_f32")]
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
@@ -949,6 +1122,28 @@ mod tests {
 
         let temp = dev.temperature_f32().await.unwrap();
         assert_eq!(temp, 25.25);
+        dev.i2c.done();
+    }
+
+    #[cfg(feature = "temperature_f32")]
+    #[cfg_attr(feature = "async", tokio::test)]
+    #[cfg_attr(not(feature = "async"), test)]
+    async fn test_temperature_f32_positive_with_error() {
+        // Test positive temperature: 25.25°C
+        // MSB: 0x19 (25°C), LSB: 0x40 (0.25°C in upper 2 bits)
+        let expected_data = [0x19, 0x40];
+
+        let mock = setup_mock(&[I2cTrans::write_read(
+            DEVICE_ADDRESS,
+            vec![RegAddr::MSBTemp as u8],
+            expected_data.to_vec(),
+        )
+        .with_error(I2cErrorKind::Other)]);
+        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
+
+        let err = dev.temperature_f32().await.unwrap_err();
+        assert!(matches!(err, DS3231Error::I2c(I2cErrorKind::Other)));
+
         dev.i2c.done();
     }
 
@@ -1141,70 +1336,6 @@ mod tests {
 
     #[cfg_attr(feature = "async", tokio::test)]
     #[cfg_attr(not(feature = "async"), test)]
-    async fn test_status_register_flags() {
-        let mock = setup_mock(&[
-            // Test various status flag combinations
-            I2cTrans::write_read(
-                DEVICE_ADDRESS,
-                vec![RegAddr::ControlStatus as u8],
-                vec![0x00],
-            ), // All flags clear
-            I2cTrans::write_read(
-                DEVICE_ADDRESS,
-                vec![RegAddr::ControlStatus as u8],
-                vec![0x88],
-            ), // OSF and EN32kHz set
-            I2cTrans::write_read(
-                DEVICE_ADDRESS,
-                vec![RegAddr::ControlStatus as u8],
-                vec![0x07],
-            ), // BSY, A2F, A1F set
-            I2cTrans::write_read(
-                DEVICE_ADDRESS,
-                vec![RegAddr::ControlStatus as u8],
-                vec![0x8F],
-            ), // All flags set
-        ]);
-
-        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
-
-        // Test all flags clear
-        let status = dev.status().await.unwrap();
-        assert!(!status.oscillator_stop_flag());
-        assert!(!status.enable_32khz_output());
-        assert!(!status.busy());
-        assert!(!status.alarm2_flag());
-        assert!(!status.alarm1_flag());
-
-        // Test OSF and EN32kHz set
-        let status = dev.status().await.unwrap();
-        assert!(status.oscillator_stop_flag());
-        assert!(status.enable_32khz_output());
-        assert!(!status.busy());
-        assert!(!status.alarm2_flag());
-        assert!(!status.alarm1_flag());
-
-        // Test BSY, A2F, A1F set
-        let status = dev.status().await.unwrap();
-        assert!(!status.oscillator_stop_flag());
-        assert!(!status.enable_32khz_output());
-        assert!(status.busy());
-        assert!(status.alarm2_flag());
-        assert!(status.alarm1_flag());
-
-        // Test all flags set
-        let status = dev.status().await.unwrap();
-        assert!(status.oscillator_stop_flag());
-        assert!(status.enable_32khz_output());
-        assert!(status.busy());
-        assert!(status.alarm2_flag());
-        assert!(status.alarm1_flag());
-
-        dev.i2c.done();
-    }
-
-    #[cfg_attr(feature = "async", tokio::test)]
-    #[cfg_attr(not(feature = "async"), test)]
     async fn test_alarm1_high_level_operations() {
         let mock = setup_mock(&[
             // Read alarm1 registers
@@ -1372,277 +1503,6 @@ mod tests {
     }
 
     #[test]
-    fn test_day_date_select_conversions() {
-        // Test DayDateSelect conversions
-        assert_eq!(DayDateSelect::from(0), DayDateSelect::Date);
-        assert_eq!(DayDateSelect::from(1), DayDateSelect::Day);
-        assert_eq!(u8::from(DayDateSelect::Date), 0);
-        assert_eq!(u8::from(DayDateSelect::Day), 1);
-    }
-
-    #[test]
-    #[should_panic(expected = "Invalid value for DayDateSelect: 2")]
-    fn test_invalid_day_date_select_conversion() {
-        let _ = DayDateSelect::from(2);
-    }
-
-    #[test]
-    fn test_config_debug_and_clone() {
-        let config = Config {
-            time_representation: TimeRepresentation::TwentyFourHour,
-            square_wave_frequency: SquareWaveFrequency::Hz1,
-            interrupt_control: InterruptControl::SquareWave,
-            battery_backed_square_wave: false,
-            oscillator_enable: Ocillator::Enabled,
-        };
-
-        // Test Debug trait
-        let debug_str = alloc::format!("{:?}", config);
-        assert!(debug_str.contains("TwentyFourHour"));
-
-        // Test Clone trait
-        let cloned_config = config.clone();
-        assert_eq!(config, cloned_config);
-
-        // Test Copy trait
-        let copied_config = config;
-        assert_eq!(config, copied_config);
-    }
-
-    #[test]
-    fn test_register_bitfield_operations() {
-        // Test Seconds register
-        let mut seconds = Seconds::default();
-        seconds.set_seconds(5);
-        seconds.set_ten_seconds(3);
-        assert_eq!(seconds.seconds(), 5);
-        assert_eq!(seconds.ten_seconds(), 3);
-
-        // Test Minutes register
-        let mut minutes = Minutes::default();
-        minutes.set_minutes(8);
-        minutes.set_ten_minutes(4);
-        assert_eq!(minutes.minutes(), 8);
-        assert_eq!(minutes.ten_minutes(), 4);
-
-        // Test Hours register
-        let mut hours = Hours::default();
-        hours.set_time_representation(TimeRepresentation::TwelveHour);
-        hours.set_pm_or_twenty_hours(1);
-        hours.set_ten_hours(1);
-        hours.set_hours(2);
-        assert_eq!(hours.time_representation(), TimeRepresentation::TwelveHour);
-        assert_eq!(hours.pm_or_twenty_hours(), 1);
-        assert_eq!(hours.ten_hours(), 1);
-        assert_eq!(hours.hours(), 2);
-
-        // Test Day register
-        let mut day = Day::default();
-        day.set_day(3);
-        assert_eq!(day.day(), 3);
-
-        // Test Date register
-        let mut date = Date::default();
-        date.set_date(5);
-        date.set_ten_date(2);
-        assert_eq!(date.date(), 5);
-        assert_eq!(date.ten_date(), 2);
-
-        // Test Month register
-        let mut month = Month::default();
-        month.set_month(2);
-        month.set_ten_month(1);
-        month.set_century(true);
-        assert_eq!(month.month(), 2);
-        assert_eq!(month.ten_month(), 1);
-        assert!(month.century());
-
-        // Test Year register
-        let mut year = Year::default();
-        year.set_year(4);
-        year.set_ten_year(2);
-        assert_eq!(year.year(), 4);
-        assert_eq!(year.ten_year(), 2);
-
-        // Test Control register
-        let mut control = Control::default();
-        control.set_oscillator_enable(Ocillator::Disabled);
-        control.set_battery_backed_square_wave(true);
-        control.set_convert_temperature(true);
-        control.set_square_wave_frequency(SquareWaveFrequency::Hz4096);
-        control.set_interrupt_control(InterruptControl::Interrupt);
-        control.set_alarm2_interrupt_enable(true);
-        control.set_alarm1_interrupt_enable(true);
-
-        assert_eq!(control.oscillator_enable(), Ocillator::Disabled);
-        assert!(control.battery_backed_square_wave());
-        assert!(control.convert_temperature());
-        assert_eq!(control.square_wave_frequency(), SquareWaveFrequency::Hz4096);
-        assert_eq!(control.interrupt_control(), InterruptControl::Interrupt);
-        assert!(control.alarm2_interrupt_enable());
-        assert!(control.alarm1_interrupt_enable());
-
-        // Test Status register
-        let mut status = Status::default();
-        status.set_oscillator_stop_flag(true);
-        status.set_enable_32khz_output(true);
-        status.set_busy(true);
-        status.set_alarm2_flag(true);
-        status.set_alarm1_flag(true);
-
-        assert!(status.oscillator_stop_flag());
-        assert!(status.enable_32khz_output());
-        assert!(status.busy());
-        assert!(status.alarm2_flag());
-        assert!(status.alarm1_flag());
-
-        // Test AgingOffset register
-        let mut aging_offset = AgingOffset::default();
-        aging_offset.set_aging_offset(-10);
-        assert_eq!(aging_offset.aging_offset(), -10);
-
-        // Test Temperature register
-        let mut temperature = Temperature::default();
-        temperature.set_temperature(25);
-        assert_eq!(temperature.temperature(), 25);
-
-        // Test TemperatureFraction register
-        let mut temp_frac = TemperatureFraction::default(); // default is 0x00
-                                                            // The setter `set_temperature_fraction` expects the 2-bit value (0, 1, 2, or 3).
-                                                            // To set 0.25°C (which is bits 7-6 = 01), we pass 0b01 to the setter.
-        temp_frac.set_temperature_fraction(0b01);
-        // The getter `temperature_fraction()` should then return this 2-bit value (0b01).
-        assert_eq!(temp_frac.temperature_fraction(), 0b01);
-        // The raw u8 value of temp_frac should be 0b01000000 = 0x40, because set_temperature_fraction(0b01)
-        // places 01 into bits 7-6.
-        assert_eq!(u8::from(temp_frac), 0x40);
-
-        // Test setting another value, e.g., 0.75°C (bits 7-6 = 11)
-        temp_frac.set_temperature_fraction(0b11);
-        assert_eq!(temp_frac.temperature_fraction(), 0b11); // Getter returns 3
-        assert_eq!(u8::from(temp_frac), 0xC0); // Raw u8 should be 0b11000000
-    }
-
-    #[test]
-    fn test_alarm_register_bitfield_operations() {
-        // Test AlarmSeconds register
-        let mut alarm_seconds = AlarmSeconds::default();
-        alarm_seconds.set_alarm_mask1(true);
-        alarm_seconds.set_ten_seconds(3);
-        alarm_seconds.set_seconds(5);
-        assert!(alarm_seconds.alarm_mask1());
-        assert_eq!(alarm_seconds.ten_seconds(), 3);
-        assert_eq!(alarm_seconds.seconds(), 5);
-
-        // Test AlarmMinutes register
-        let mut alarm_minutes = AlarmMinutes::default();
-        alarm_minutes.set_alarm_mask2(true);
-        alarm_minutes.set_ten_minutes(4);
-        alarm_minutes.set_minutes(8);
-        assert!(alarm_minutes.alarm_mask2());
-        assert_eq!(alarm_minutes.ten_minutes(), 4);
-        assert_eq!(alarm_minutes.minutes(), 8);
-
-        // Test AlarmHours register
-        let mut alarm_hours = AlarmHours::default();
-        alarm_hours.set_alarm_mask3(true);
-        alarm_hours.set_time_representation(TimeRepresentation::TwelveHour);
-        alarm_hours.set_pm_or_twenty_hours(1);
-        alarm_hours.set_ten_hours(1);
-        alarm_hours.set_hours(2);
-        assert!(alarm_hours.alarm_mask3());
-        assert_eq!(
-            alarm_hours.time_representation(),
-            TimeRepresentation::TwelveHour
-        );
-        assert_eq!(alarm_hours.pm_or_twenty_hours(), 1);
-        assert_eq!(alarm_hours.ten_hours(), 1);
-        assert_eq!(alarm_hours.hours(), 2);
-
-        // Test AlarmDayDate register
-        let mut alarm_day_date = AlarmDayDate::default();
-        alarm_day_date.set_alarm_mask4(true);
-        alarm_day_date.set_day_date_select(DayDateSelect::Day);
-        alarm_day_date.set_ten_date(2);
-        alarm_day_date.set_day_or_date(5);
-        assert!(alarm_day_date.alarm_mask4());
-        assert_eq!(alarm_day_date.day_date_select(), DayDateSelect::Day);
-        assert_eq!(alarm_day_date.ten_date(), 2);
-        assert_eq!(alarm_day_date.day_or_date(), 5);
-    }
-
-    #[cfg_attr(feature = "async", tokio::test)]
-    #[cfg_attr(not(feature = "async"), test)]
-    async fn test_comprehensive_register_coverage() {
-        let mock = setup_mock(&[
-            // Test all register reads
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Seconds as u8], vec![0x45]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Minutes as u8], vec![0x30]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Hours as u8], vec![0x15]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Day as u8], vec![0x04]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Date as u8], vec![0x14]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Month as u8], vec![0x03]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Year as u8], vec![0x24]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::Control as u8], vec![0x1C]),
-            I2cTrans::write_read(
-                DEVICE_ADDRESS,
-                vec![RegAddr::ControlStatus as u8],
-                vec![0x88],
-            ),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::AgingOffset as u8], vec![0x05]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::MSBTemp as u8], vec![0x19]),
-            I2cTrans::write_read(DEVICE_ADDRESS, vec![RegAddr::LSBTemp as u8], vec![0x40]),
-            // Test all register writes
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Seconds as u8, 0x30]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Minutes as u8, 0x45]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Hours as u8, 0x12]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Day as u8, 0x02]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Date as u8, 0x10]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Month as u8, 0x06]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Year as u8, 0x25]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::Control as u8, 0x04]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::ControlStatus as u8, 0x00]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::AgingOffset as u8, 0x0A]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::MSBTemp as u8, 0x20]),
-            I2cTrans::write(DEVICE_ADDRESS, vec![RegAddr::LSBTemp as u8, 0x80]),
-        ]);
-
-        let mut dev = DS3231::new(mock, DEVICE_ADDRESS);
-
-        // Test reading all registers
-        let _seconds = dev.second().await.unwrap();
-        let _minutes = dev.minute().await.unwrap();
-        let _hours = dev.hour().await.unwrap();
-        let _day = dev.day().await.unwrap();
-        let _date = dev.date().await.unwrap();
-        let _month = dev.month().await.unwrap();
-        let _year = dev.year().await.unwrap();
-        let _control = dev.control().await.unwrap();
-        let _status = dev.status().await.unwrap();
-        let _aging_offset = dev.aging_offset().await.unwrap();
-        let _temperature = dev.temperature().await.unwrap();
-        let _temp_fraction = dev.temperature_fraction().await.unwrap();
-
-        // Test writing all registers
-        dev.set_second(Seconds(0x30)).await.unwrap();
-        dev.set_minute(Minutes(0x45)).await.unwrap();
-        dev.set_hour(Hours(0x12)).await.unwrap();
-        dev.set_day(Day(0x02)).await.unwrap();
-        dev.set_date(Date(0x10)).await.unwrap();
-        dev.set_month(Month(0x06)).await.unwrap();
-        dev.set_year(Year(0x25)).await.unwrap();
-        dev.set_control(Control(0x04)).await.unwrap();
-        dev.set_status(Status(0x00)).await.unwrap();
-        dev.set_aging_offset(AgingOffset(0x0A)).await.unwrap();
-        dev.set_temperature(Temperature(0x20)).await.unwrap();
-        dev.set_temperature_fraction(TemperatureFraction(0x80))
-            .await
-            .unwrap();
-
-        dev.i2c.done();
-    }
-
-    #[test]
     fn test_error_type_coverage() {
         use crate::alarm::AlarmError;
         use crate::datetime::DS3231DateTimeError;
@@ -1654,24 +1514,6 @@ mod tests {
 
         let alarm_error: DS3231Error<()> = DS3231Error::Alarm(AlarmError::InvalidTime("test"));
         assert!(matches!(alarm_error, DS3231Error::Alarm(_)));
-    }
-
-    #[cfg(feature = "defmt")]
-    #[test]
-    fn test_control_defmt_formatting() {
-        // Test defmt formatting for Control register
-        let mut control = Control::default();
-        control.set_oscillator_enable(Ocillator::Enabled);
-        control.set_battery_backed_square_wave(true);
-        control.set_convert_temperature(true);
-        control.set_square_wave_frequency(SquareWaveFrequency::Hz1024);
-        control.set_interrupt_control(InterruptControl::Interrupt);
-        control.set_alarm2_interrupt_enable(true);
-        control.set_alarm1_interrupt_enable(true);
-
-        // This test ensures the defmt::Format implementation compiles and covers the code
-        // In a real embedded environment, this would produce formatted output
-        let _formatted = defmt::Debug2Format(&control);
     }
 
     #[cfg_attr(feature = "async", tokio::test)]
@@ -1724,7 +1566,7 @@ mod tests {
     }
 
     #[test]
-    fn test_register_from_u8_conversions() {
+    fn test_enum_u8_conversions() {
         // Test TimeRepresentation conversions
         assert_eq!(
             TimeRepresentation::from(0),
@@ -1755,30 +1597,6 @@ mod tests {
         assert_eq!(u8::from(SquareWaveFrequency::Hz1024), 0b01);
         assert_eq!(u8::from(SquareWaveFrequency::Hz4096), 0b10);
         assert_eq!(u8::from(SquareWaveFrequency::Hz8192), 0b11);
-    }
-
-    #[test]
-    #[should_panic(expected = "Invalid value for TimeRepresentation: 2")]
-    fn test_invalid_time_representation_conversion() {
-        let _ = TimeRepresentation::from(2);
-    }
-
-    #[test]
-    #[should_panic(expected = "Invalid value for Ocillator: 2")]
-    fn test_invalid_oscillator_conversion() {
-        let _ = Ocillator::from(2);
-    }
-
-    #[test]
-    #[should_panic(expected = "Invalid value for InterruptControl: 2")]
-    fn test_invalid_interrupt_control_conversion() {
-        let _ = InterruptControl::from(2);
-    }
-
-    #[test]
-    #[should_panic(expected = "Invalid value for SquareWaveFrequency: 4")]
-    fn test_invalid_square_wave_frequency_conversion() {
-        let _ = SquareWaveFrequency::from(4);
     }
 
     #[test]

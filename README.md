@@ -79,6 +79,7 @@ The crate can be compiled with the following features:
 - `async`: Enables async I²C support
 - `log`: Enables logging via the `log` crate
 - `defmt`: Enables logging via the `defmt` crate
+- `temperature_f32` - Enables temperature reading as f32
 
 ## License
 

@@ -59,20 +59,7 @@ jobs:
         run: cargo clippy --no-default-features -- -D warnings
       
       - name: Run clippy (async)
-        run: cargo clippy --no-default-features --features async -- -D warnings
-      
-      - name: Run clippy (log)
-        run: cargo clippy --no-default-features --features log -- -D warnings
-      
-      - name: Run clippy (async + log)
-        run: cargo clippy --no-default-features --features "async,log" -- -D warnings
-      
-      # Uncomment when chrono supports defmt:
-      # - name: Run clippy (defmt)
-      #   run: cargo clippy --no-default-features --features defmt -- -D warnings
-      #
-      # - name: Run clippy (async + defmt)
-      #   run: cargo clippy --no-default-features --features "async,defmt" -- -D warnings
+        run: cargo clippy --all-features -- -D warnings
 
   # Formatting check
   fmt:
