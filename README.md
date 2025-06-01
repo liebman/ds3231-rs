@@ -50,14 +50,7 @@ let datetime = rtc.datetime()?;
 
 ### Async Example
 
-Enable the async feature in your `Cargo.toml`:
-
-```toml
-[dependencies]
-ds3231 = { version = "0.1", features = ["async"] }
-```
-
-Then use with async/await:
+Enable the async feature in your `Cargo.toml` and use with async/await:
 
 ```rust
 use ds3231::asynch::DS3231;

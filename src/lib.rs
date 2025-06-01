@@ -53,14 +53,7 @@
 //!
 //! ### Async Usage
 //!
-//! Enable the async feature in your `Cargo.toml`:
-//!
-//! ```toml
-//! [dependencies]
-//! ds3231 = { version = "0.1", features = ["async"] }
-//! ```
-//!
-//! Then use with async/await:
+//! Enable the async feature on `ds3231`in your `Cargo.toml` and use with async/await:
 //!
 //! ```rust,ignore
 //! use ds3231::{DS3231, Alarm1Config, Alarm2Config};
