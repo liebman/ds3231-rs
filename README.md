@@ -6,8 +6,8 @@
 [![Coverage Status](https://coveralls.io/repos/github/liebman/ds3231-rs/badge.svg?branch=main)](https://coveralls.io/github/liebman/ds3231-rs?branch=main)
 
 A platform-agnostic Rust driver for the DS3231 Real-Time Clock, built on the `embedded-hal` ecosystem.
-The DS3231 is a low-cost, extremely accurate I²C real-time clock (RTC) with an integrated 
-temperature-compensated crystal oscillator (TCXO) and crystal.
+The DS3231 is a low-cost, extremely accurate I²C real-time clock (RTC) with an integrated
+temperature-compensated crystal oscillator (TCXO).
 
 - Both blocking and async I²C operation support
 - Full register access (time/date, alarms, control, status)
@@ -85,8 +85,8 @@ The crate can be compiled with the following features:
 
 Licensed under either of:
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
 
 at your option.
 
@@ -94,4 +94,4 @@ at your option.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
-dual licensed as above, without any additional terms or conditions. 
+dual licensed as above, without any additional terms or conditions.
