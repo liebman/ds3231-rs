@@ -82,28 +82,28 @@ impl From<TimeRepresentation> for u8 {
 /// Oscillator control for the DS3231.
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Ocillator {
+pub enum Oscillator {
     /// Oscillator is enabled
     Enabled = 0,
     /// Oscillator is disabled
     Disabled = 1,
 }
-impl From<u8> for Ocillator {
-    /// Creates an Ocillator from a raw register value.
+impl From<u8> for Oscillator {
+    /// Creates an Oscillator from a raw register value.
     ///
     /// # Panics
     /// Panics if the value is not 0 or 1.
     fn from(v: u8) -> Self {
         match v {
-            0 => Ocillator::Enabled,
-            1 => Ocillator::Disabled,
-            _ => panic!("Invalid value for Ocillator: {}", v),
+            0 => Oscillator::Enabled,
+            1 => Oscillator::Disabled,
+            _ => panic!("Invalid value for Oscillator: {}", v),
         }
     }
 }
-impl From<Ocillator> for u8 {
-    /// Converts an Ocillator to its raw register value.
-    fn from(v: Ocillator) -> Self {
+impl From<Oscillator> for u8 {
+    /// Converts an Oscillator to its raw register value.
+    fn from(v: Oscillator) -> Self {
         v as u8
     }
 }
@@ -385,7 +385,7 @@ bitfield! {
     pub struct Control(u8);
     impl Debug;
     /// Oscillator enable/disable control
-    pub from into Ocillator, oscillator_enable, set_oscillator_enable: 7, 7;
+    pub from into Oscillator, oscillator_enable, set_oscillator_enable: 7, 7;
     /// Enable square wave output on battery power
     pub battery_backed_square_wave, set_battery_backed_square_wave: 6;
     /// Force temperature conversion
@@ -405,8 +405,8 @@ from_register_u8!(Control);
 impl defmt::Format for Control {
     fn format(&self, f: defmt::Formatter) {
         match self.oscillator_enable() {
-            Ocillator::Enabled => defmt::write!(f, "Oscillator enabled"),
-            Ocillator::Disabled => defmt::write!(f, "Oscillator disabled"),
+            Oscillator::Enabled => defmt::write!(f, "Oscillator enabled"),
+            Oscillator::Disabled => defmt::write!(f, "Oscillator disabled"),
         }
         if self.battery_backed_square_wave() {
             defmt::write!(f, ", Battery backed square wave enabled");
@@ -857,7 +857,7 @@ mod tests {
     fn test_control_register_conversions() {
         // Test control register with all bits set
         let control = Control::from(0xFF);
-        assert_eq!(control.oscillator_enable(), Ocillator::Disabled);
+        assert_eq!(control.oscillator_enable(), Oscillator::Disabled);
         assert_eq!(control.battery_backed_square_wave(), true);
         assert_eq!(control.convert_temperature(), true);
         // 0xFF has bits 4:3 = 11 = 0b11 = 3, which maps to Hz8192
@@ -869,7 +869,7 @@ mod tests {
 
         // Test control register with no bits set
         let control = Control::from(0x00);
-        assert_eq!(control.oscillator_enable(), Ocillator::Enabled);
+        assert_eq!(control.oscillator_enable(), Oscillator::Enabled);
         assert_eq!(control.battery_backed_square_wave(), false);
         assert_eq!(control.convert_temperature(), false);
         assert_eq!(control.square_wave_frequency(), SquareWaveFrequency::Hz1);
@@ -880,7 +880,7 @@ mod tests {
 
         // Test specific bit combinations
         let control = Control::from(0x1C); // 0x1C = 00011100: bits 4:3 = 11 = Hz8192, bit 2 = 1 = Interrupt
-        assert_eq!(control.oscillator_enable(), Ocillator::Enabled);
+        assert_eq!(control.oscillator_enable(), Oscillator::Enabled);
         assert_eq!(control.battery_backed_square_wave(), false);
         assert_eq!(control.convert_temperature(), false);
         assert_eq!(control.square_wave_frequency(), SquareWaveFrequency::Hz8192); // bits 4:3 = 11 = Hz8192
@@ -1221,7 +1221,7 @@ mod tests {
 
         // Test Control register
         let mut control = Control::default();
-        control.set_oscillator_enable(Ocillator::Disabled);
+        control.set_oscillator_enable(Oscillator::Disabled);
         control.set_battery_backed_square_wave(true);
         control.set_convert_temperature(true);
         control.set_square_wave_frequency(SquareWaveFrequency::Hz4096);
@@ -1229,7 +1229,7 @@ mod tests {
         control.set_alarm2_interrupt_enable(true);
         control.set_alarm1_interrupt_enable(true);
 
-        assert_eq!(control.oscillator_enable(), Ocillator::Disabled);
+        assert_eq!(control.oscillator_enable(), Oscillator::Disabled);
         assert!(control.battery_backed_square_wave());
         assert!(control.convert_temperature());
         assert_eq!(control.square_wave_frequency(), SquareWaveFrequency::Hz4096);
@@ -1333,9 +1333,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid value for Ocillator: 2")]
+    #[should_panic(expected = "Invalid value for Oscillator: 2")]
     fn test_invalid_oscillator_conversion() {
-        let _ = Ocillator::from(2);
+        let _ = Oscillator::from(2);
     }
 
     #[test]

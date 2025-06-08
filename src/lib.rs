@@ -12,7 +12,7 @@
 //! ### Blocking Usage
 //!
 //! ```rust,ignore
-//! use ds3231::{DS3231, Config, TimeRepresentation, SquareWaveFrequency, InterruptControl, Ocillator, Alarm1Config, Alarm2Config};
+//! use ds3231::{DS3231, Config, TimeRepresentation, SquareWaveFrequency, InterruptControl, Oscillator, Alarm1Config, Alarm2Config};
 //!
 //! // Create configuration
 //! let config = Config {
@@ -20,7 +20,7 @@
 //!     square_wave_frequency: SquareWaveFrequency::Hz1,
 //!     interrupt_control: InterruptControl::SquareWave,
 //!     battery_backed_square_wave: false,
-//!     oscillator_enable: Ocillator::Enabled,
+//!     oscillator_enable: Oscillator::Enabled,
 //! };
 //!
 //! // Initialize device with I2C
@@ -139,7 +139,7 @@ pub use crate::alarm::{Alarm1Config, Alarm2Config, AlarmError, DS3231Alarm1, DS3
 // Re-export public types from registers module
 pub use crate::registers::{
     AgingOffset, AlarmDayDate, AlarmHours, AlarmMinutes, AlarmSeconds, Control, Date, Day,
-    DayDateSelect, Hours, InterruptControl, Minutes, Month, Ocillator, Seconds,
+    DayDateSelect, Hours, InterruptControl, Minutes, Month, Oscillator, Seconds,
     SquareWaveFrequency, Status, Temperature, TemperatureFraction, TimeRepresentation, Year,
 };
 
@@ -160,7 +160,7 @@ pub struct Config {
     /// Enable square wave output when running on battery power
     pub battery_backed_square_wave: bool,
     /// Enable or disable the oscillator
-    pub oscillator_enable: Ocillator,
+    pub oscillator_enable: Oscillator,
 }
 
 /// Error type for DS3231 operations.
@@ -903,7 +903,7 @@ mod tests {
             square_wave_frequency: SquareWaveFrequency::Hz1,
             interrupt_control: InterruptControl::SquareWave,
             battery_backed_square_wave: false,
-            oscillator_enable: Ocillator::Enabled,
+            oscillator_enable: Oscillator::Enabled,
         };
 
         let mock = setup_mock(&[
@@ -1548,7 +1548,7 @@ mod tests {
             square_wave_frequency: SquareWaveFrequency::Hz1,
             interrupt_control: InterruptControl::SquareWave,
             battery_backed_square_wave: false,
-            oscillator_enable: Ocillator::Enabled,
+            oscillator_enable: Oscillator::Enabled,
         };
         dev.configure(&config).await.unwrap();
 
@@ -1569,11 +1569,11 @@ mod tests {
         assert_eq!(u8::from(TimeRepresentation::TwentyFourHour), 0);
         assert_eq!(u8::from(TimeRepresentation::TwelveHour), 1);
 
-        // Test Ocillator conversions
-        assert_eq!(Ocillator::from(0), Ocillator::Enabled);
-        assert_eq!(Ocillator::from(1), Ocillator::Disabled);
-        assert_eq!(u8::from(Ocillator::Enabled), 0);
-        assert_eq!(u8::from(Ocillator::Disabled), 1);
+        // Test Oscillator conversions
+        assert_eq!(Oscillator::from(0), Oscillator::Enabled);
+        assert_eq!(Oscillator::from(1), Oscillator::Disabled);
+        assert_eq!(u8::from(Oscillator::Enabled), 0);
+        assert_eq!(u8::from(Oscillator::Disabled), 1);
 
         // Test InterruptControl conversions
         assert_eq!(InterruptControl::from(0), InterruptControl::SquareWave);
@@ -1661,7 +1661,7 @@ mod tests {
             square_wave_frequency: SquareWaveFrequency::Hz1,
             interrupt_control: InterruptControl::SquareWave,
             battery_backed_square_wave: false,
-            oscillator_enable: Ocillator::Enabled,
+            oscillator_enable: Oscillator::Enabled,
         };
 
         let mock = setup_mock(&[
