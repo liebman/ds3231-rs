@@ -46,7 +46,7 @@
 
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
 use ds3231::{
-    Alarm1Config, Config, InterruptControl, Ocillator, SquareWaveFrequency, TimeRepresentation,
+    Alarm1Config, Config, InterruptControl, Oscillator, SquareWaveFrequency, TimeRepresentation,
     DS3231,
 };
 use esp_backtrace as _;
@@ -93,7 +93,7 @@ fn main() -> ! {
         square_wave_frequency: SquareWaveFrequency::Hz1,
         interrupt_control: InterruptControl::Interrupt, // Enable interrupt mode
         battery_backed_square_wave: false,
-        oscillator_enable: Ocillator::Enabled,
+        oscillator_enable: Oscillator::Enabled,
     };
 
     match rtc.configure(&rtc_config) {

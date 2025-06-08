@@ -27,7 +27,7 @@ ds3231 = "0.2.0"
 ### Blocking Example
 
 ```rust
-use ds3231::{DS3231, Config, TimeRepresentation, SquareWaveFrequency, InterruptControl, Ocillator};
+use ds3231::{DS3231, Config, TimeRepresentation, SquareWaveFrequency, InterruptControl, Oscillator};
 
 // Create configuration
 let config = Config {
@@ -35,7 +35,7 @@ let config = Config {
     square_wave_frequency: SquareWaveFrequency::Hz1,
     interrupt_control: InterruptControl::SquareWave,
     battery_backed_square_wave: false,
-    oscillator_enable: Ocillator::Enabled,
+    oscillator_enable: Oscillator::Enabled,
 };
 
 // Initialize device with I2C
