@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] - ReleaseDate
 
+## [0.3.0] - 2025-06-09
+
+### Breaking Changes
+
+- The public enum `Ocillator` was renamed to `Oscillator` (#10)
+
 ### Added
 
 ### Changed
@@ -18,8 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 ### Fixed
-
-- Fix a typo in the public enum `Oscillator`
 
 ### Security
 
@@ -62,5 +66,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 <!-- next-url -->
-[Unreleased]: https://github.com/liebman/ds3231-rs/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/user/ds3231-rs/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/liebman/ds3231-rs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/liebman/ds3231-rs/compare/v0.1.0...v0.2.0

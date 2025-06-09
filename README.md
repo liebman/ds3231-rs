@@ -21,7 +21,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ds3231 = "0.2.0"
+ds3231 = "0.3.0"
 ```
 
 ### Blocking Example
